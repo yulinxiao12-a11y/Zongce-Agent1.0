@@ -1,0 +1,23 @@
+# Upload only the static frontend project for Netlify builds.
+*
+!netlify.toml
+!frontend/
+!frontend/**
+
+# Local frontend artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Local backend/runtime artifacts
+backend/
+upstream-reference/
+video-frames/
+比赛要求/
+相关假数据参考/
+*.zip
+*.db
+.env
+.env.*
+.git/
+.vscode/
