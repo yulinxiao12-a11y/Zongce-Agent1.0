@@ -1,0 +1,471 @@
+{% extends "base.html" %}
+{% block title %}我的综测 - 综测星轨{% endblock %}
+{% block content %}
+<div class="page">
+    <!-- Title -->
+    <div class="page-header" style="padding:24px 0 8px;margin-bottom:16px;">
+        <h1 style="font-size:28px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:10px;"><i class="fas fa-user-astronaut" style="color:var(--primary);"></i> 我的星轨</h1>
+        <p style="color:var(--text-muted);margin-top:4px;font-size:14px;">管理已完成的综测项目 · 上传证明经审核通过后自动计入得分</p>
+    </div>
+
+    <!-- Score Hero -->
+    <div class="card" style="padding:32px 36px 24px;margin-bottom:20px;text-align:center;">
+        <div style="font-size:84px;font-weight:800;line-height:1;color:var(--primary);letter-spacing:-3px;" id="heroTotal">--</div>
+        <div style="font-size:14px;color:var(--text-muted);margin-top:2px;letter-spacing:2px;">综合得分</div>
+        <div style="font-size:11px;color:var(--text-light);margin-top:4px;">满分100分 · 品德20% + 学业65% + 文体15%</div>
+        <div style="display:flex;align-items:stretch;gap:14px;flex-wrap:wrap;margin-top:22px;">
+            <div style="flex:1;min-width:300px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">
+                <div style="background:var(--surface-alt);border-radius:12px;padding:18px 12px 14px;display:flex;flex-direction:column;align-items:center;gap:6px;">
+                    <div style="font-size:12px;font-weight:600;color:var(--primary);">品德行为 <span style="font-weight:400;color:var(--text-light);">20%</span></div>
+                    <div style="font-size:34px;font-weight:800;color:var(--primary);line-height:1;" id="heroMoral">--</div>
+                    <div style="font-size:11px;color:var(--text-muted);" id="heroMoralDetail"></div>
+                </div>
+                <div style="background:var(--surface-alt);border-radius:12px;padding:18px 12px 14px;display:flex;flex-direction:column;align-items:center;gap:6px;">
+                    <div style="font-size:12px;font-weight:600;color:var(--accent-blue);">学业表现 <span style="font-weight:400;color:var(--text-light);">65%</span></div>
+                    <div style="font-size:34px;font-weight:800;color:var(--accent-blue);line-height:1;" id="heroAcademic">--</div>
+                    <div style="font-size:11px;color:var(--text-muted);" id="heroAcademicDetail"></div>
+                </div>
+                <div style="background:var(--surface-alt);border-radius:12px;padding:18px 12px 14px;display:flex;flex-direction:column;align-items:center;gap:6px;">
+                    <div style="font-size:12px;font-weight:600;color:var(--accent-amber-dark);">文体表现 <span style="font-weight:400;color:var(--text-light);">15%</span></div>
+                    <div style="font-size:34px;font-weight:800;color:var(--accent-amber-dark);line-height:1;" id="heroSports">--</div>
+                    <div style="font-size:11px;color:var(--text-muted);" id="heroSportsDetail"></div>
+                </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px;justify-content:center;flex-shrink:0;min-width:120px;">
+                <a href="/upload" class="btn btn-primary btn-sm" style="justify-content:center;"><i class="fas fa-cloud-upload-alt"></i> 上传证明</a>
+                <a href="/" class="btn btn-outline btn-sm" style="justify-content:center;"><i class="fas fa-th-list"></i> 加分大厅</a>
+                <a href="javascript:void(0)" onclick="viewCurrentRegulation()" class="btn btn-outline btn-sm" style="justify-content:center;"><i class="fas fa-file-contract"></i> 现行细则</a>
+            </div>
+        </div>
+        <div style="margin-top:16px;padding:10px 16px;background:var(--surface-alt);border-radius:8px;font-size:11px;color:var(--text-muted);text-align:left;line-height:1.7;">
+            <i class="fas fa-info-circle" style="color:var(--primary);"></i> <strong>计分规则：</strong>各板块得分 = 基础分 + 附加分(上限封顶)；综测总分 = 品德×20% + 学业×65% + 文体×15%。附加分上限：品德30分、学业20分、文体40分。
+        </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="chart-row" style="margin-bottom:20px;">
+        <div class="card">
+            <div class="card-header"><h2><i class="fas fa-chart-pie" style="color:var(--primary);margin-right:6px;"></i>得分构成</h2></div>
+            <div class="card-body"><div class="chart-box" id="chartPie"></div></div>
+        </div>
+        <div class="card">
+            <div class="card-header"><h2><i class="fas fa-chart-bar" style="color:var(--primary);margin-right:6px;"></i>分类分布</h2></div>
+            <div class="card-body"><div class="chart-box" id="chartBar"></div></div>
+        </div>
+    </div>
+
+    <!-- Submission Tracker -->
+    <div id="submissionTrackerCard" class="card" style="padding:20px 24px;margin-bottom:20px;">
+        <div class="flex-between" style="margin-bottom:16px;">
+            <h2 style="font-size:15px;font-weight:600;color:var(--text);"><i class="fas fa-tasks" style="margin-right:6px;color:var(--primary);"></i>提交进度追踪</h2>
+            <span style="font-size:11px;color:var(--text-muted);" id="submissionTrackerSummary">--</span>
+        </div>
+        <div class="stats-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:12px;" id="submissionStatsGrid"></div>
+        <div style="height:8px;background:rgba(255,255,255,0.6);border-radius:4px;overflow:hidden;">
+            <div id="submissionProgressFill" style="height:100%;background:var(--primary);border-radius:4px;transition:width 0.8s ease;width:0;"></div>
+        </div>
+    </div>
+
+    <!-- AI Suggestions -->
+    <div id="suggestionsCard" class="card" style="padding:20px 24px;margin-bottom:20px;">
+        <div class="flex-between" style="margin-bottom:12px;">
+            <h2 style="font-size:15px;font-weight:600;color:var(--text);"><i class="fas fa-robot" style="margin-right:6px;color:var(--primary);"></i>AI 智能建议</h2>
+            <span style="font-size:11px;color:var(--text-muted);"><i class="fas fa-sparkles"></i> 实时分析</span>
+        </div>
+        <div class="suggestions" id="suggestionsList"></div>
+    </div>
+
+    <!-- Calendar -->
+    <div class="card" style="margin-bottom:20px;">
+        <div class="card-header"><h2><i class="fas fa-calendar-alt" style="color:var(--accent-amber-dark);margin-right:6px;"></i>项目日历</h2></div>
+        <div class="card-body"><div class="calendar-grid" id="calendarContainer"></div></div>
+    </div>
+
+    <!-- Plans -->
+    <div class="card" id="plansCard" style="display:none;margin-bottom:20px;">
+        <div class="card-header flex-between">
+            <h2><i class="fas fa-calendar-check" style="color:var(--accent-blue);margin-right:6px;"></i>备赛与活动</h2>
+            <a href="/opportunities" class="btn btn-outline btn-sm"><i class="fas fa-rocket"></i></a>
+        </div>
+        <div class="card-body" id="plansContent"></div>
+    </div>
+
+    <!-- Items Table -->
+    <div class="card">
+        <div class="card-header flex-between">
+            <h2>我的综测项目 (<span id="itemCount">0</span>)</h2>
+            <div style="display:flex;gap:8px;">
+                <button class="btn btn-outline btn-sm" onclick="loadData()"><i class="fas fa-sync-alt"></i> 刷新</button>
+                <button class="btn btn-outline btn-sm" id="btnToggleDelete" onclick="toggleDeleteMode()" style="color:var(--danger);"><i class="fas fa-trash-alt"></i> 删除</button>
+                <button class="btn btn-sm" id="btnBatchDelete" style="display:none;color:#fff;background:var(--danger);" onclick="showDeleteModal()"><i class="fas fa-check"></i> 确认删除选中</button>
+                <button class="btn btn-outline btn-sm" id="btnCancelDelete" style="display:none;" onclick="toggleDeleteMode()">取消</button>
+            </div>
+        </div>
+        <div class="card-body" style="padding:0;">
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th class="col-checkbox" style="display:none;width:36px;"><input type="checkbox" id="selectAll" onchange="toggleSelectAll(this)"></th><th>项目名称</th><th>大类</th><th>级别</th><th>得分</th><th>证明材料</th><th>完成日期</th></tr></thead>
+                    <tbody id="itemsTableBody"><tr><td colspan="7" class="text-center text-muted" style="padding:30px;">暂无项目，去「智能上传」提交证明材料</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="filesModal" style="display:none;"><div class="modal-box" style="max-width:600px;" id="filesModalContent"></div></div>
+    <div class="modal-overlay" id="deleteModal" style="display:none;">
+        <div class="modal-box" style="max-width:420px;">
+            <h3><i class="fas fa-exclamation-triangle" style="color:var(--danger);"></i> 确认删除</h3>
+            <p style="font-size:13px;color:var(--text-muted);margin:12px 0;">确定要删除选中的 <strong id="deleteCount">0</strong> 个综测项目吗？</p>
+            <p style="font-size:11px;color:var(--danger);">删除后不可恢复，需要重新提交证明材料。</p>
+            <div class="modal-actions"><button class="btn btn-outline btn-sm" onclick="closeDeleteModal()">取消</button><button class="btn btn-sm" style="background:var(--danger);color:#fff;" onclick="confirmBatchDelete()"><i class="fas fa-trash-alt"></i> 确定删除</button></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+var chartPie = null, chartBar = null;
+
+async function loadData() {
+    // Fetch submissions
+    var submissions = [];
+    try {
+        var r = await fetch('/api/submissions');
+        var d = await r.json();
+        submissions = d.submissions;
+    } catch(e) {}
+
+    // Fetch user items
+    var r2 = await fetch('/api/user-items');
+    var d2 = await r2.json();
+
+    // Fetch calculate
+    var r3 = await fetch('/api/calculate', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: '{}'
+    });
+    var result = await r3.json();
+
+    // Update score hero
+    document.getElementById('itemCount').textContent = result.selected_count;
+    document.getElementById('heroTotal').textContent = result.total_score;
+    document.getElementById('heroMoral').textContent = result.moral_score;
+    document.getElementById('heroAcademic').textContent = result.academic_score;
+    document.getElementById('heroSports').textContent = result.sports_score;
+    document.getElementById('heroMoralDetail').innerHTML = '基础70 + 附加' + result.moral_extra + '<br><small style=\"color:var(--text-light);\">加权贡献 ' + (result.moral_score * 0.2).toFixed(1) + '分</small>';
+    document.getElementById('heroAcademicDetail').innerHTML = '基础80 + 附加' + result.academic_extra + '<br><small style=\"color:var(--text-light);\">加权贡献 ' + (result.academic_score * 0.65).toFixed(1) + '分</small>';
+    document.getElementById('heroSportsDetail').innerHTML = '基础60 + 附加' + result.sports_extra + '<br><small style=\"color:var(--text-light);\">加权贡献 ' + (result.sports_score * 0.15).toFixed(1) + '分</small>';
+
+    // Submission tracker
+    var pending = submissions.filter(function(s) { return s.status === 'pending'; }).length;
+    var autoOk = submissions.filter(function(s) { return s.status === 'auto_approved'; }).length;
+    var approved = submissions.filter(function(s) { return s.status === 'approved'; }).length;
+    var rejected = submissions.filter(function(s) { return s.status === 'rejected'; }).length;
+    var totalSubs = submissions.length;
+    var completed = autoOk + approved;
+    var pct = totalSubs > 0 ? Math.round((completed + rejected) / totalSubs * 100) : 0;
+
+    document.getElementById('submissionTrackerSummary').textContent =
+        totalSubs > 0 ? '已处理 ' + (completed + rejected) + '/' + totalSubs + ' · 通过率 ' + Math.round(completed / Math.max(totalSubs, 1) * 100) + '%' : '暂无提交记录';
+
+    var iconColors = {
+        pending: {bg:'#fef3c7', color:'#d97706', icon:'fa-clock'},
+        auto_approved: {bg:'#e3edf7', color:'#1a5276', icon:'fa-robot'},
+        approved: {bg:'#d1fae5', color:'#065f46', icon:'fa-check-circle'},
+        rejected: {bg:'#fce7f3', color:'#9d174d', icon:'fa-times-circle'}
+    };
+    var statData = [
+        {label:'待审核', key:'pending', value:pending},
+        {label:'AI自动通过', key:'auto_approved', value:autoOk},
+        {label:'管理员通过', key:'approved', value:approved},
+        {label:'已驳回', key:'rejected', value:rejected},
+        {label:'总计提交', key:'total', value:totalSubs}
+    ];
+
+    var statsHtml = '';
+    for (var i = 0; i < statData.length; i++) {
+        var s = statData[i];
+        var ic = iconColors[s.key] || {bg:'var(--primary-light)', color:'var(--primary)', icon:'fa-file'};
+        var desc = s.key === 'total' ? '全部提交' :
+                   s.key === 'pending' ? '等待管理员审批' :
+                   s.key === 'auto_approved' ? '高置信率自动通过' :
+                   s.key === 'approved' ? '管理员审核通过' : '材料不全或不符合';
+        statsHtml += '<div class="stat-card" style="border-left:3px solid ' + ic.color + ';">' +
+            '<div class="stat-icon" style="background:' + ic.bg + ';color:' + ic.color + ';"><i class="fas ' + ic.icon + '"></i></div>' +
+            '<div class="stat-info"><h3>' + s.label + '</h3><div class="value" style="color:' + ic.color + ';">' + s.value + '</div><div class="sub">' + desc + '</div></div></div>';
+    }
+    document.getElementById('submissionStatsGrid').innerHTML = statsHtml;
+    document.getElementById('submissionProgressFill').style.width = pct + '%';
+
+    // Charts
+    if (!chartPie) {
+        var pieDom = document.getElementById('chartPie');
+        if (pieDom && typeof echarts !== 'undefined') {
+            chartPie = echarts.init(pieDom);
+        }
+    }
+    if (chartPie) {
+        chartPie.setOption({
+            tooltip: {trigger:'item', formatter:function(p){return p.name + ': ' + p.value + '分 (' + p.percent + '%)\n' + (p.data.detail || '');}},
+            series: [{
+                type:'pie', radius:['50%','78%'],
+                data: [
+                    {name:'品德行为', value:result.moral_score, detail:'基础70 + 附加' + result.moral_extra, itemStyle:{color:'#1a4d7e'}},
+                    {name:'学业表现', value:result.academic_score, detail:'基础80 + 附加' + result.academic_extra, itemStyle:{color:'#2980b9'}},
+                    {name:'文体表现', value:result.sports_score, detail:'基础60 + 附加' + result.sports_extra, itemStyle:{color:'#c98d1a'}}
+                ],
+                label:{formatter:'{b}\n{c}分', fontSize:12},
+                itemStyle:{borderRadius:4, borderColor:'#fff', borderWidth:3}
+            }]
+        });
+    }
+
+    var sections = {};
+    result.details.forEach(function(d) {
+        var s = d.section || '其他';
+        sections[s] = (sections[s] || 0) + d.score;
+    });
+
+    if (!chartBar) {
+        var barDom = document.getElementById('chartBar');
+        if (barDom && typeof echarts !== 'undefined') {
+            chartBar = echarts.init(barDom);
+        }
+    }
+    if (chartBar) {
+        chartBar.setOption({
+            tooltip:{trigger:'axis'},
+            xAxis:{type:'category', data:Object.keys(sections), axisLabel:{fontSize:10, rotate:25}},
+            yAxis:{type:'value', name:'分数'},
+            series:[{
+                type:'bar', data:Object.values(sections),
+                itemStyle:{color:new echarts.graphic.LinearGradient(0,0,0,1,
+                    [{offset:0,color:'#1a4d7e'},{offset:1,color:'#6b9ec4'}]), borderRadius:[6,6,0,0]}
+            }]
+        });
+    }
+
+    // AI Suggestions
+    var sugs = result.suggestions.slice();
+    sugs.push({type:'tip', text:'持续关注「机会大厅」的学科竞赛和近期活动，提前规划备赛和参与计划。'});
+    sugs.push({type:'info', text:'当前你已提交 ' + totalSubs + ' 项申请，其中 ' + completed + ' 项已通过。建议定期查看审核进度。'});
+    if (result.selected_count < 3) {
+        sugs.push({type:'tip', text:'综测项目较少，去「星轨探索」浏览全部206个加分项目，看看还有哪些可以申报。'});
+    }
+    if (result.selected_count >= 5) {
+        sugs.push({type:'praise', text:'已获得 ' + result.selected_count + ' 项加分，保持全面发展的好势头！'});
+    }
+    sugs.push({type:'info', text:'温馨提示：英语四六级、计算机等级考试、普通话测试等证书类项目需要上传成绩单截图。'});
+
+    var sugsHtml = '';
+    var icons = {praise:'<i class=\"fas fa-trophy\" style=\"color:var(--accent-amber);\"></i>', tip:'<i class=\"fas fa-lightbulb\" style=\"color:var(--accent-amber);\"></i>', info:'<i class=\"fas fa-info-circle\" style=\"color:var(--primary);\"></i>'};
+    for (var j = 0; j < sugs.length; j++) {
+        var sg = sugs[j];
+        var ico = icons[sg.type] || '<i class=\"fas fa-info-circle\" style=\"color:var(--primary);\"></i>';
+        sugsHtml += '<div class="suggestion ' + sg.type + '"><span class="sug-icon">' + ico + '</span><span class="sug-text">' + sg.text + '</span></div>';
+    }
+    document.getElementById('suggestionsList').innerHTML = sugsHtml;
+
+    // Items table
+    var catBadges = {moral:'badge-moral', academic:'badge-academic', sports:'badge-sports'};
+    var lvlBadges = {'国家级':'badge-national','省级':'badge-provincial','校级':'badge-school','院级':'badge-college','班级':'badge-college'};
+    var inDelete = (document.getElementById('btnToggleDelete').style.display === 'none');
+
+    if (result.details.length === 0) {
+        document.getElementById('itemsTableBody').innerHTML = '<tr><td colspan="7" class="text-center text-muted" style="padding:30px;">暂无项目，去「智能上传」提交证明材料</td></tr>';
+        document.getElementById('btnBatchDelete').style.display = 'none';
+    } else {
+        var colStyle = inDelete ? '' : ' style="display:none;"';
+        document.querySelector('.col-checkbox').style.display = inDelete ? '' : 'none';
+        var rowsHtml = '';
+        for (var k = 0; k < result.details.length; k++) {
+            var d = result.details[k];
+            var fl = d.submission_id
+                ? '<a href="javascript:void(0)" onclick="viewSubmissionFiles(' + d.submission_id + ')" class="btn btn-outline btn-sm" style="font-size:11px;"><i class="fas fa-paperclip"></i> 查看</a>'
+                : '<span style="font-size:11px;color:var(--text-light);">--</span>';
+            rowsHtml += '<tr>' +
+                '<td class="col-checkbox"' + colStyle + '><input type="checkbox" class="item-checkbox" value="' + d.user_item_id + '" onchange="onCheckboxChange()"></td>' +
+                '<td><strong>' + escHtml(d.title) + '</strong></td>' +
+                '<td><span class="badge ' + (catBadges[d.category] || 'badge-moral') + '">' + escHtml(d.category_name || '') + '</span></td>' +
+                '<td><span class="badge ' + (lvlBadges[d.level] || 'badge-college') + '">' + escHtml(d.level || '-') + '</span></td>' +
+                '<td><strong style="color:var(--primary);">+' + d.score + '</strong></td>' +
+                '<td>' + fl + '</td>' +
+                '<td style="font-size:12px;">' + (d.completion_date || '-') + '</td></tr>';
+        }
+        document.getElementById('itemsTableBody').innerHTML = rowsHtml;
+    }
+
+    // Calendar
+    buildCalendar(result.details);
+    loadPlans();
+    window.addEventListener('resize', function() {
+        if (chartPie) chartPie.resize();
+        if (chartBar) chartBar.resize();
+    });
+}
+
+function buildCalendar(details) {
+    var months = {};
+    details.forEach(function(d) {
+        if (!d.completion_date) return;
+        var dt = new Date(d.completion_date);
+        var key = dt.getFullYear() + '年' + (dt.getMonth() + 1) + '月';
+        if (!months[key]) months[key] = [];
+        months[key].push({day: dt.getDate(), title: d.title, category: d.category});
+    });
+    var cc = {moral:'var(--primary)', academic:'var(--accent-blue)', sports:'var(--accent-amber)'};
+    var keys = Object.keys(months).sort(function(a,b) { return b.localeCompare(a); });
+    var container = document.getElementById('calendarContainer');
+    if (keys.length === 0) {
+        container.innerHTML = '<p class="text-muted" style="text-align:center;">上传证明材料并填写完成日期后将显示项目日历</p>';
+        return;
+    }
+    var html = '';
+    for (var i = 0; i < keys.length; i++) {
+        var k = keys[i];
+        html += '<div class="calendar-month"><h4>' + k + '</h4>';
+        for (var j = 0; j < months[k].length; j++) {
+            var e = months[k][j];
+            html += '<div class="calendar-day"><span class="dot" style="background:' + (cc[e.category] || '#999') + ';"></span>' + e.day + '日 ' + escHtml(e.title.substring(0,10)) + '</div>';
+        }
+        html += '</div>';
+    }
+    container.innerHTML = html;
+}
+
+async function loadPlans() {
+    var cp = JSON.parse(localStorage.getItem('zongce_comp_plans') || '[]');
+    var ap = JSON.parse(localStorage.getItem('zongce_act_plans') || '[]');
+    var card = document.getElementById('plansCard');
+    if (cp.length === 0 && ap.length === 0) {
+        card.style.display = 'none';
+        return;
+    }
+    card.style.display = 'block';
+    var h = '';
+    if (cp.length > 0) {
+        try {
+            var r = await fetch('/api/competitions');
+            var d = await r.json();
+            var cs = d.competitions.filter(function(c) { return cp.includes(c.id); });
+            if (cs.length > 0) {
+                h += '<h4 style="font-size:13px;font-weight:600;margin-bottom:8px;color:var(--primary);"><i class="fas fa-trophy"></i> 备赛中（' + cs.length + '项）</h4>';
+                for (var i = 0; i < cs.length; i++) {
+                    var c = cs[i];
+                    h += '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;margin:4px 0;background:var(--surface-alt);border-radius:8px;">' +
+                        '<div style="flex:1;min-width:0;"><strong style="font-size:13px;">' + escHtml(c.name) + '</strong><span style="font-size:11px;color:var(--text-muted);display:block;">' + escHtml(c.level) + '</span></div>' +
+                        '<button class="btn btn-outline btn-sm" onclick="removeCompPlan(\'' + c.id + '\')" style="color:var(--danger);"><i class="fas fa-times"></i></button></div>';
+                }
+            }
+        } catch(e) {}
+    }
+    if (ap.length > 0) {
+        try {
+            var r2 = await fetch('/api/activities');
+            var d2 = await r2.json();
+            var as = d2.activities.filter(function(a) { return ap.includes(a.id); });
+            if (as.length > 0) {
+                h += '<h4 style="font-size:13px;font-weight:600;margin:12px 0 8px;color:var(--accent-blue);"><i class="fas fa-calendar-star"></i> 计划参加（' + as.length + '项）</h4>';
+                for (var i2 = 0; i2 < as.length; i2++) {
+                    var a = as[i2];
+                    h += '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;margin:4px 0;background:var(--surface-alt);border-radius:8px;">' +
+                        '<div style="flex:1;min-width:0;"><strong style="font-size:13px;">' + escHtml(a.title) + '</strong><span style="font-size:11px;color:var(--text-muted);display:block;">' + escHtml(a.date) + '</span></div>' +
+                        '<button class="btn btn-outline btn-sm" onclick="removeActPlan(\'' + a.id + '\')" style="color:var(--danger);"><i class="fas fa-times"></i></button></div>';
+                }
+            }
+        } catch(e) {}
+    }
+    document.getElementById('plansContent').innerHTML = h || '<p class="text-muted">暂无计划</p>';
+}
+
+function removeCompPlan(id) { var p = JSON.parse(localStorage.getItem('zongce_comp_plans') || '[]'); p = p.filter(function(x) { return x !== id; }); localStorage.setItem('zongce_comp_plans', JSON.stringify(p)); loadPlans(); showToast('已移除'); }
+function removeActPlan(id) { var p = JSON.parse(localStorage.getItem('zongce_act_plans') || '[]'); p = p.filter(function(x) { return x !== id; }); localStorage.setItem('zongce_act_plans', JSON.stringify(p)); loadPlans(); showToast('已移除'); }
+
+var _deleteMode = false;
+function toggleDeleteMode() {
+    _deleteMode = !_deleteMode;
+    document.getElementById('btnToggleDelete').style.display = _deleteMode ? 'none' : '';
+    document.getElementById('btnBatchDelete').style.display = _deleteMode ? '' : 'none';
+    document.getElementById('btnCancelDelete').style.display = _deleteMode ? '' : 'none';
+    document.querySelector('.col-checkbox').style.display = _deleteMode ? '' : 'none';
+    var cols = document.querySelectorAll('.col-checkbox');
+    for (var i = 0; i < cols.length; i++) cols[i].style.display = _deleteMode ? '' : 'none';
+    document.getElementById('selectAll').checked = false;
+    if (!_deleteMode) {
+        var cbs = document.querySelectorAll('.item-checkbox');
+        for (var j = 0; j < cbs.length; j++) cbs[j].checked = false;
+    }
+    loadData();
+}
+function toggleSelectAll(el) {
+    var cbs = document.querySelectorAll('.item-checkbox');
+    for (var i = 0; i < cbs.length; i++) cbs[i].checked = el.checked;
+    onCheckboxChange();
+}
+function onCheckboxChange() {
+    var n = document.querySelectorAll('.item-checkbox:checked').length;
+    document.getElementById('btnBatchDelete').disabled = (n === 0);
+    document.getElementById('btnBatchDelete').textContent = n > 0 ? '确认删除选中(' + n + ')' : '确认删除选中';
+}
+function showDeleteModal() {
+    var n = document.querySelectorAll('.item-checkbox:checked').length;
+    if (n === 0) { showToast('请先勾选'); return; }
+    document.getElementById('deleteCount').textContent = n;
+    document.getElementById('deleteModal').style.display = 'flex';
+}
+function closeDeleteModal() { document.getElementById('deleteModal').style.display = 'none'; }
+async function confirmBatchDelete() {
+    var cbs = document.querySelectorAll('.item-checkbox:checked');
+    var deleted = 0;
+    for (var i = 0; i < cbs.length; i++) {
+        try { var r = await fetch('/api/user-items/' + cbs[i].value, {method:'DELETE'}); if (r.ok) deleted++; } catch(e) {}
+    }
+    closeDeleteModal();
+    showToast('已删除 ' + deleted + ' 个项目');
+    _deleteMode = false;
+    document.getElementById('btnToggleDelete').style.display = '';
+    document.getElementById('btnBatchDelete').style.display = 'none';
+    document.getElementById('btnCancelDelete').style.display = 'none';
+    document.querySelector('.col-checkbox').style.display = 'none';
+    var cols = document.querySelectorAll('.col-checkbox');
+    for (var j = 0; j < cols.length; j++) cols[j].style.display = 'none';
+    loadData();
+}
+async function viewSubmissionFiles(sid) {
+    try {
+        var r = await fetch('/api/submissions/' + sid + '/files');
+        var d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        var pn = {appointment:'任职证明/聘书',certificate:'荣誉证书',award_cert:'获奖证书',paper_publish:'论文发表证明',paper_content:'论文全文',project_doc:'立项/结项证明',project_result:'项目成果证明',patent_cert:'专利/软著证书',score_report:'成绩单/证书',cert_file:'等级证书',transcript:'成绩单',admission:'录取证明',article:'发表文章证明',participation:'参赛证明',general:'相关证明'};
+        var h = '<h3><i class="fas fa-paperclip"></i> 证明材料 — ' + escHtml(d.title) + '</h3><div style="margin-top:12px;display:flex;flex-direction:column;gap:8px;">';
+        for (var i = 0; i < d.files.length; i++) {
+            var f = d.files[i];
+            var icon = f.file_type === 'pdf' ? 'fa-file-pdf' : (f.file_type.indexOf('doc') >= 0 ? 'fa-file-word' : 'fa-file-image');
+            h += '<div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--surface-alt);border-radius:8px;">' +
+                '<i class="fas ' + icon + '" style="font-size:18px;color:var(--primary);"></i>' +
+                '<div style="flex:1;min-width:0;"><strong style="font-size:13px;">' + escHtml(f.filename) + '</strong>' +
+                '<span style="font-size:11px;color:var(--text-muted);display:block;">' + (pn[f.proof_type] || f.proof_type || '材料') + ' | ' + f.uploaded_at + '</span></div>' +
+                '<a href="' + f.view_url + '" target="_blank" class="btn btn-outline btn-sm"><i class="fas fa-eye"></i> 查看</a></div>';
+        }
+        h += '</div><div class="modal-actions"><button class="btn btn-outline btn-sm" onclick="document.getElementById(\'filesModal\').style.display=\'none\'">关闭</button></div>';
+        document.getElementById('filesModalContent').innerHTML = h;
+        document.getElementById('filesModal').style.display = 'flex';
+    } catch(e) { showToast('加载失败'); }
+}
+async function viewCurrentRegulation() {
+    try {
+        var r = await fetch('/api/admin/regulations/current');
+        if (!r.ok) { showToast('暂无现行细则'); return; }
+        var d = await r.json();
+        window.open('/api/admin/regulations/' + d.id + '/file', '_blank');
+    } catch(e) { showToast('查看失败'); }
+}
+function showToast(msg) { var t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(function() { t.remove(); }, 2000); }
+function escHtml(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+loadData();
+document.getElementById('deleteModal').addEventListener('click', function(e) { if (e.target === this) closeDeleteModal(); });
+document.getElementById('filesModal').addEventListener('click', function(e) { if (e.target === this) this.style.display = 'none'; });
+</script>
+{% endblock %}

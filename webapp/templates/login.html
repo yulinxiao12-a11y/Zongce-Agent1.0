@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - 综测星轨</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="login-page">
+    <div class="login-container">
+        <div class="login-brand">
+            <div class="brand-icon"><i class="fas fa-chart-pie"></i></div>
+            <h2>综测星轨</h2>
+            <p>电子与信息学院</p>
+            <p style="margin-top:12px; font-size:12px; opacity:0.6;">智能加分管理 · AI材料识别 · 一键计算综测成绩</p>
+        </div>
+        <div class="login-form-area">
+            <div class="login-tabs">
+                <div class="login-tab active" data-tab="login" onclick="switchTab('login')">登录</div>
+                <div class="login-tab" data-tab="register" onclick="switchTab('register')">注册</div>
+            </div>
+
+            <!-- Login Form -->
+            <form id="loginForm" onsubmit="handleLogin(event)">
+                <div class="form-group">
+                    <label>学号</label>
+                    <input type="text" id="loginStudentId" placeholder="请输入学号" required autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label>密码</label>
+                    <input type="password" id="loginPassword" placeholder="请输入密码" required autocomplete="current-password">
+                </div>
+                <div class="form-error" id="loginError"></div>
+                <button type="submit" class="btn btn-primary" style="width:100%; justify-content:center; padding:12px; font-size:14px;">
+                    <i class="fas fa-sign-in-alt"></i> 登录
+                </button>
+            </form>
+
+            <!-- Register Form -->
+            <form id="registerForm" style="display:none;" onsubmit="handleRegister(event)">
+                <div class="form-group">
+                    <label>学号</label>
+                    <input type="text" id="regStudentId" placeholder="请输入学号" required>
+                    <div class="input-hint">请输入你的学号</div>
+                </div>
+                <div class="form-group">
+                    <label>姓名</label>
+                    <input type="text" id="regName" placeholder="请输入真实姓名" required>
+                </div>
+                <div class="form-group">
+                    <label>密码</label>
+                    <input type="password" id="regPassword" placeholder="至少6位，可含数字和大小写字母" required minlength="6">
+                </div>
+                <div class="form-group">
+                    <label>确认密码</label>
+                    <input type="password" id="regPasswordConfirm" placeholder="再次输入密码" required>
+                </div>
+                <div class="form-group">
+                    <label>院系（可选）</label>
+                    <input type="text" id="regDepartment" value="电子与信息学院">
+                </div>
+                <div class="form-group">
+                    <label>班级（可选）</label>
+                    <input type="text" id="regClassName" placeholder="如：通信2101班">
+                </div>
+                <div class="form-error" id="registerError"></div>
+                <button type="submit" class="btn btn-primary" style="width:100%; justify-content:center; padding:12px; font-size:14px;">
+                    <i class="fas fa-user-plus"></i> 注册
+                </button>
+            </form>
+
+            <p style="text-align:center; margin-top:20px; font-size:11px; color:var(--text-light);">
+                默认管理员账号：admin / 000000
+            </p>
+        </div>
+    </div>
+
+    <script>
+    function switchTab(tab) {
+        document.querySelectorAll('.login-tab').forEach(t => t.classList.remove('active'));
+        document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
+        document.getElementById('loginForm').style.display = tab === 'login' ? 'block' : 'none';
+        document.getElementById('registerForm').style.display = tab === 'register' ? 'block' : 'none';
+        document.getElementById('loginError').classList.remove('show');
+        document.getElementById('registerError').classList.remove('show');
+    }
+
+    async function handleLogin(e) {
+        e.preventDefault();
+        const errEl = document.getElementById('loginError');
+        errEl.classList.remove('show');
+
+        const studentId = document.getElementById('loginStudentId').value.trim();
+        const password = document.getElementById('loginPassword').value.trim();
+
+        try {
+            const resp = await fetch('/login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({student_id: studentId, password})
+            });
+            const data = await resp.json();
+            if (!resp.ok) { errEl.textContent = data.error; errEl.classList.add('show'); return; }
+            window.location.href = data.redirect;
+        } catch (err) {
+            errEl.textContent = '网络错误，请重试';
+            errEl.classList.add('show');
+        }
+    }
+
+    async function handleRegister(e) {
+        e.preventDefault();
+        const errEl = document.getElementById('registerError');
+        errEl.classList.remove('show');
+
+        const studentId = document.getElementById('regStudentId').value.trim();
+        const name = document.getElementById('regName').value.trim();
+        const password = document.getElementById('regPassword').value.trim();
+        const confirm = document.getElementById('regPasswordConfirm').value.trim();
+
+        if (password !== confirm) { errEl.textContent = '两次密码输入不一致'; errEl.classList.add('show'); return; }
+        if (password.length < 6) { errEl.textContent = '密码至少6位'; errEl.classList.add('show'); return; }
+        if (!/^\d+$/.test(studentId)) { errEl.textContent = '学号只能是数字'; errEl.classList.add('show'); return; }
+
+        try {
+            const resp = await fetch('/register', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    student_id: studentId,
+                    name,
+                    password,
+                    department: document.getElementById('regDepartment').value.trim(),
+                    class_name: document.getElementById('regClassName').value.trim(),
+                })
+            });
+            const data = await resp.json();
+            if (!resp.ok) { errEl.textContent = data.error; errEl.classList.add('show'); return; }
+            window.location.href = data.redirect;
+        } catch (err) {
+            errEl.textContent = '网络错误，请重试';
+            errEl.classList.add('show');
+        }
+    }
+    </script>
+</body>
+</html>

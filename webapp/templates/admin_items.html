@@ -1,0 +1,361 @@
+{% extends "base.html" %}
+{% block title %}项目管理 - 综测星轨{% endblock %}
+{% block content %}
+<div class="page">
+    <div class="page-header flex-between" style="padding:24px 0 8px;margin-bottom:20px;">
+        <div>
+            <h1 style="font-size:28px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:10px;"><i class="fas fa-list-alt" style="color:var(--primary);"></i> 星轨项目管理</h1>
+            <p style="color:var(--text-muted);margin-top:4px;font-size:14px;">管理加分项目目录 · 添加/编辑/禁用星轨项目</p>
+        </div>
+        <button class="btn btn-primary" onclick="openAddItem()"><i class="fas fa-plus"></i> 添加项目</button>
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <div class="filter-bar">
+                <select id="filterCategory" onchange="loadItems()">
+                    <option value="">全部板块</option>
+                    <option value="moral">品德行为</option>
+                    <option value="academic">学业表现</option>
+                    <option value="sports">文体表现</option>
+                </select>
+                <select id="filterLevel" onchange="loadItems()">
+                    <option value="">全部级别</option>
+                    <option value="国家级">国家级</option>
+                    <option value="省级">省级</option>
+                    <option value="校级">校级</option>
+                    <option value="院级">院级</option>
+                    <option value="班级">班级</option>
+                </select>
+                <input type="text" id="searchKeyword" placeholder="搜索项目名称..." oninput="debounceSearch()">
+                <span class="text-muted" style="font-size:13px;" id="itemCount"></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-body" style="padding:0;">
+            <div class="table-wrap">
+                <table class="admin-table">
+                    <thead>
+                        <tr><th>ID</th><th>标题</th><th>大类</th><th>子类</th><th>分类</th><th>级别</th><th>分数</th><th>图标</th><th>备注</th><th>操作</th></tr>
+                    </thead>
+                    <tbody id="itemsTableBody">
+                        <tr><td colspan="10"><div class="spinner"></div></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="flex-between mt-16" id="paginationBar" style="display:none;">
+        <span class="text-muted" style="font-size:13px;" id="pageInfo"></span>
+        <div style="display:flex; gap:8px;">
+            <button class="btn btn-outline btn-sm" id="btnPrev" onclick="changePage(-1)" disabled>上一页</button>
+            <button class="btn btn-outline btn-sm" id="btnNext" onclick="changePage(1)" disabled>下一页</button>
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit Item Modal -->
+<div class="modal-overlay" id="itemModal" style="display:none;">
+    <div class="modal-box" style="max-width:600px;">
+        <h3 id="itemModalTitle">添加项目</h3>
+        <form id="itemForm" onsubmit="submitItem(event)">
+            <input type="hidden" id="editItemId">
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+                <div class="form-group">
+                    <label>项目ID</label>
+                    <input type="text" id="editId" placeholder="如：A070" required maxlength="8">
+                </div>
+                <div class="form-group">
+                    <label>标题</label>
+                    <input type="text" id="editTitle" placeholder="项目名称" required>
+                </div>
+                <div class="form-group">
+                    <label>大类</label>
+                    <select id="editCategory">
+                        <option value="academic">学业表现</option>
+                        <option value="moral">品德行为</option>
+                        <option value="sports">文体表现</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>级别</label>
+                    <select id="editLevel">
+                        <option value="校级">校级</option>
+                        <option value="国家级">国家级</option>
+                        <option value="省级">省级</option>
+                        <option value="院级">院级</option>
+                        <option value="班级">班级</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>分数</label>
+                    <input type="number" id="editScore" value="5" step="0.5" min="0" max="100" required>
+                </div>
+                <div class="form-group">
+                    <label>图标 (Font Awesome)</label>
+                    <input type="text" id="editIcon" value="fa-star" placeholder="fa-star">
+                </div>
+                <div class="form-group">
+                    <label>子类代码</label>
+                    <input type="text" id="editSubcategory" placeholder="如：certificate">
+                </div>
+                <div class="form-group">
+                    <label>分类名</label>
+                    <input type="text" id="editSection" placeholder="如：英语证书">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>描述</label>
+                <textarea id="editDescription" style="width:100%;min-height:60px;" placeholder="项目详细描述"></textarea>
+            </div>
+            <div class="form-group">
+                <label>备注/限制条件</label>
+                <input type="text" id="editNote" placeholder="如：此项最高加10分">
+            </div>
+
+            <!-- AI Fill area -->
+            <div style="background:var(--primary-light); border-radius:var(--radius-sm); padding:12px; margin-bottom:12px;">
+                <div class="flex-between" style="margin-bottom:8px;">
+                    <span style="font-size:12px;font-weight:600;color:var(--primary);"><i class="fas fa-robot"></i> AI智能填充</span>
+                </div>
+                <div style="display:flex; gap:8px;">
+                    <input type="text" id="aiActivityName" placeholder="输入活动名称..." style="flex:1; padding:6px 10px; border:1.5px solid var(--border); border-radius:6px; font-size:12px; font-family:inherit; outline:none;">
+                    <button type="button" class="btn btn-sm btn-primary" onclick="aiFill()"><i class="fas fa-magic"></i> AI填充</button>
+                </div>
+                <div id="aiFillResult" style="font-size:11px;color:var(--text-muted);margin-top:4px;display:none;"></div>
+            </div>
+
+            <div class="modal-actions">
+                <button type="button" class="btn btn-outline btn-sm" onclick="closeItemModal()">取消</button>
+                <button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-save"></i> 保存</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const CAT_NAMES = {'moral':'品德行为','academic':'学业表现','sports':'文体表现'};
+const CAT_BADGES = {'moral':'badge-moral','academic':'badge-academic','sports':'badge-sports'};
+const LVL_BADGES = {'国家级':'badge-national','省级':'badge-provincial','校级':'badge-school','院级':'badge-college','班级':'badge-college'};
+
+let currentPage = 1;
+let totalPages = 1;
+let searchTimer = null;
+
+function debounceSearch() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(loadItems, 300);
+}
+
+async function loadItems() {
+    const category = document.getElementById('filterCategory').value;
+    const level = document.getElementById('filterLevel').value;
+    const keyword = document.getElementById('searchKeyword').value.trim();
+
+    let url = `/api/catalog?page=${currentPage}&per_page=50`;
+    if (category) url += `&category=${category}`;
+    if (level) url += `&level=${level}`;
+    if (keyword) url += `&keyword=${encodeURIComponent(keyword)}`;
+
+    const resp = await fetch(url);
+    const data = await resp.json();
+
+    totalPages = Math.ceil(data.total / data.per_page) || 1;
+    document.getElementById('pageInfo').textContent = `共 ${data.total} 项，第 ${data.page} / ${totalPages} 页`;
+    document.getElementById('btnPrev').disabled = currentPage <= 1;
+    document.getElementById('btnNext').disabled = currentPage >= totalPages;
+    document.getElementById('paginationBar').style.display = data.total > 0 ? 'flex' : 'none';
+    document.getElementById('itemCount').textContent = `共 ${data.total} 项`;
+
+    if (data.items.length === 0) {
+        document.getElementById('itemsTableBody').innerHTML =
+            '<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text-muted);">暂无项目</td></tr>';
+        return;
+    }
+
+    document.getElementById('itemsTableBody').innerHTML = data.items.map(item => `
+        <tr>
+            <td><code style="font-size:11px;">${escHtml(item.id)}</code></td>
+            <td><strong>${escHtml(item.title)}</strong></td>
+            <td><span class="badge ${CAT_BADGES[item.category]}">${CAT_NAMES[item.category]}</span></td>
+            <td style="font-size:12px;">${escHtml(item.subcategory_name || '-')}</td>
+            <td style="font-size:12px;">${escHtml(item.section || '-')}</td>
+            <td><span class="badge ${LVL_BADGES[item.level]||'badge-college'}">${escHtml(item.level)}</span></td>
+            <td><strong style="color:var(--primary);">+${item.score}</strong></td>
+            <td><i class="fas ${escHtml(item.icon)}" style="color:var(--primary);"></i></td>
+            <td style="font-size:11px;color:var(--text-muted);max-width:120px;overflow:hidden;text-overflow:ellipsis;">${escHtml(item.note || '-')}</td>
+            <td>
+                <div class="action-btns">
+                    <button class="btn btn-outline btn-sm" onclick="openEditItem('${escJs(item.id)}')"><i class="fas fa-edit"></i></button>
+                    <button class="btn btn-outline btn-sm" onclick="deleteItem('${escJs(item.id)}', '${escJs(item.title)}')" style="color:var(--danger);"><i class="fas fa-ban"></i></button>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function changePage(delta) {
+    currentPage = Math.max(1, Math.min(totalPages, currentPage + delta));
+    loadItems();
+}
+
+function openAddItem() {
+    document.getElementById('itemModalTitle').textContent = '添加项目';
+    document.getElementById('editItemId').value = '';
+    document.getElementById('editId').value = '';
+    document.getElementById('editId').disabled = false;
+    document.getElementById('editTitle').value = '';
+    document.getElementById('editCategory').value = 'academic';
+    document.getElementById('editLevel').value = '校级';
+    document.getElementById('editScore').value = '5';
+    document.getElementById('editIcon').value = 'fa-star';
+    document.getElementById('editSubcategory').value = '';
+    document.getElementById('editSection').value = '';
+    document.getElementById('editDescription').value = '';
+    document.getElementById('editNote').value = '';
+    document.getElementById('aiActivityName').value = '';
+    document.getElementById('aiFillResult').style.display = 'none';
+    document.getElementById('itemModal').style.display = 'flex';
+}
+
+async function openEditItem(id) {
+    const resp = await fetch('/api/catalog?per_page=300');
+    const data = await resp.json();
+    const item = data.items.find(i => i.id === id);
+    if (!item) { alert('项目未找到'); return; }
+
+    document.getElementById('itemModalTitle').textContent = '编辑项目';
+    document.getElementById('editItemId').value = id;
+    document.getElementById('editId').value = id;
+    document.getElementById('editId').disabled = true;
+    document.getElementById('editTitle').value = item.title;
+    document.getElementById('editCategory').value = item.category;
+    document.getElementById('editLevel').value = item.level;
+    document.getElementById('editScore').value = item.score;
+    document.getElementById('editIcon').value = item.icon;
+    document.getElementById('editSubcategory').value = item.subcategory;
+    document.getElementById('editSection').value = item.section;
+    document.getElementById('editDescription').value = item.description;
+    document.getElementById('editNote').value = item.note;
+    document.getElementById('aiActivityName').value = item.title;
+    document.getElementById('aiFillResult').style.display = 'none';
+    document.getElementById('itemModal').style.display = 'flex';
+}
+
+function closeItemModal() {
+    document.getElementById('itemModal').style.display = 'none';
+    document.getElementById('editId').disabled = false;
+}
+
+async function submitItem(e) {
+    e.preventDefault();
+    const existingId = document.getElementById('editItemId').value;
+
+    const payload = {
+        id: document.getElementById('editId').value.trim(),
+        title: document.getElementById('editTitle').value.trim(),
+        category: document.getElementById('editCategory').value,
+        level: document.getElementById('editLevel').value,
+        score: parseFloat(document.getElementById('editScore').value) || 0,
+        icon: document.getElementById('editIcon').value.trim() || 'fa-star',
+        subcategory: document.getElementById('editSubcategory').value.trim(),
+        section: document.getElementById('editSection').value.trim(),
+        description: document.getElementById('editDescription').value.trim(),
+        note: document.getElementById('editNote').value.trim(),
+    };
+
+    try {
+        if (existingId) {
+            const resp = await fetch(`/api/admin/items/${existingId}`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload),
+            });
+            if (!resp.ok) { const d = await resp.json(); throw new Error(d.error); }
+        } else {
+            const resp = await fetch('/api/admin/items', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload),
+            });
+            if (!resp.ok) { const d = await resp.json(); throw new Error(d.error); }
+        }
+
+        closeItemModal();
+        document.getElementById('editId').disabled = false;
+        showToast(existingId ? '项目已更新' : '项目已创建');
+        loadItems();
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+async function deleteItem(id, title) {
+    if (!confirm(`确定禁用项目「${title}」(${id}) 吗？`)) return;
+    try {
+        const resp = await fetch(`/api/admin/items/${id}`, {method: 'DELETE'});
+        if (!resp.ok) throw new Error('操作失败');
+        showToast(`已禁用项目「${title}」`);
+        loadItems();
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+async function aiFill() {
+    const name = document.getElementById('aiActivityName').value.trim();
+    if (!name) { alert('请输入活动名称'); return; }
+
+    const resultDiv = document.getElementById('aiFillResult');
+    resultDiv.style.display = 'block';
+    resultDiv.textContent = 'AI分析中...';
+
+    try {
+        const resp = await fetch('/api/admin/items/ai-fill', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name, description: document.getElementById('editDescription').value.trim()}),
+        });
+        const data = await resp.json();
+
+        if (data.category) document.getElementById('editCategory').value = data.category;
+        if (data.level) document.getElementById('editLevel').value = data.level;
+        if (data.section) document.getElementById('editSection').value = data.section;
+        if (data.subcategory) document.getElementById('editSubcategory').value = data.subcategory;
+        if (data.suggested_score) document.getElementById('editScore').value = data.suggested_score;
+
+        resultDiv.innerHTML = `<i class="fas fa-check-circle" style="color:var(--success);"></i> ${data.reason || 'AI已自动填充字段'} ${data.ai_enhanced ? '(AI增强)' : '(规则匹配)'}`;
+    } catch (err) {
+        resultDiv.textContent = 'AI填充失败，请手动输入';
+    }
+}
+
+function showToast(msg) {
+    const t = document.createElement('div');
+    t.className = 'toast'; t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 2500);
+}
+
+function escHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s || '';
+    return d.innerHTML;
+}
+
+function escJs(s) {
+    return (s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
+}
+
+// Close modal on overlay click
+document.getElementById('itemModal').addEventListener('click', function(e) {
+    if (e.target === this) { closeItemModal(); document.getElementById('editId').disabled = false; }
+});
+
+loadItems();
+</script>
+{% endblock %}

@@ -439,7 +439,7 @@ export async function mockApi<T>(path: string, options: RequestInit = {}): Promi
     return state.ruleDocs.find((doc: any) => doc.id === id) as T
   }
   if (method === 'POST' && cleanPath === '/upload' && options.body instanceof FormData) {
-    const file = options.body.get('file')
+    const file = options.body.get('files') || options.body.get('file')
     return { filename: file instanceof File ? file.name : 'demo.png', url: file instanceof File ? await fileToDataUrl(file) : '' } as T
   }
   if (method === 'POST' && cleanPath === '/rule-documents/upload') {

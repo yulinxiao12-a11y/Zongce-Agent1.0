@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}学科竞赛 - 综测星轨{% endblock %}
+{% block content %}
+<div class="page">
+    <div class="page-header" style="padding:24px 0 8px;margin-bottom:20px;">
+        <h1 style="font-size:28px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:10px;"><i class="fas fa-trophy" style="color:var(--primary);"></i> 学科竞赛</h1>
+        <p style="color:var(--text-muted);margin-top:4px;font-size:14px;">广东技术师范大学学科竞赛目录 · 与综测加分关联，备赛即加分</p>
+    </div>
+
+    <div class="stats-grid" style="grid-template-columns: repeat(4, 1fr);">
+        <div class="stat-card"><div class="stat-icon academic"><i class="fas fa-flag"></i></div><div class="stat-info"><h3>国家级A类</h3><div class="value" id="countNational">--</div><div class="sub">最高级别竞赛</div></div></div>
+        <div class="stat-card"><div class="stat-icon sports"><i class="fas fa-medal"></i></div><div class="stat-info"><h3>省级A类</h3><div class="value" id="countProvincial">--</div><div class="sub">省级重点竞赛</div></div></div>
+        <div class="stat-card"><div class="stat-icon total"><i class="fas fa-list"></i></div><div class="stat-info"><h3>总计比赛</h3><div class="value" id="countAll">--</div><div class="sub">学科竞赛总数</div></div></div>
+        <div class="stat-card"><div class="stat-icon moral"><i class="fas fa-calendar-check"></i></div><div class="stat-info"><h3>我的备赛</h3><div class="value" id="countMyPlan">--</div><div class="sub">已加入备赛计划</div></div></div>
+    </div>
+
+    <div class="card"><div class="card-body"><div class="filter-bar">
+        <select id="filterLevel" onchange="renderCompetitions()"><option value="">全部级别</option><option value="国家级">国家级A类</option><option value="省级">省级A类</option></select>
+        <input type="text" id="filterKeyword" placeholder="搜索比赛名称..." oninput="renderCompetitions()">
+        <span class="text-muted" style="font-size:14px;" id="resultCount"></span>
+    </div></div></div>
+
+    <div id="compGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:16px;"></div>
+</div>
+
+<!-- Detail Modal -->
+<div class="modal-overlay" id="compModal" style="display:none;">
+    <div class="modal-box" style="max-width:600px;" id="compModalContent"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let allComps = [];
+let myPlans = JSON.parse(localStorage.getItem('zongce_competition_plans') || '[]');
+
+async function init() {
+    const resp = await fetch('/api/competitions');
+    const data = await resp.json();
+    allComps = data.competitions;
+
+    document.getElementById('countNational').textContent = allComps.filter(c => c.mapped_level==='国家级').length;
+    document.getElementById('countProvincial').textContent = allComps.filter(c => c.mapped_level==='省级').length;
+    document.getElementById('countAll').textContent = allComps.length;
+    document.getElementById('countMyPlan').textContent = myPlans.length;
+
+    renderCompetitions();
+    document.getElementById('compModal').addEventListener('click', function(e) { if (e.target === this) closeCompModal(); });
+}
+
+function renderCompetitions() {
+    const lvl = document.getElementById('filterLevel').value;
+    const kw = document.getElementById('filterKeyword').value.toLowerCase();
+    let items = allComps;
+    if (lvl) items = items.filter(c => c.mapped_level === lvl);
+    if (kw) items = items.filter(c => c.name.toLowerCase().includes(kw) || (c.organizer||'').toLowerCase().includes(kw));
+
+    document.getElementById('resultCount').textContent = `共 ${items.length} 项`;
+
+    const lvlBadges = {'国家级':'badge-national','省级':'badge-provincial'};
+    const lvlColors = {'国家级A类':'#be185d','省级A类':'#1a4d7e'};
+
+    document.getElementById('compGrid').innerHTML = items.map(c => {
+        const inPlan = myPlans.includes(c.id);
+        return `
+        <div class="catalog-item ${inPlan ? 'selected' : ''}">
+            <div class="catalog-item-top">
+                <span class="catalog-icon" style="background:var(--surface-alt);"><i class="fas fa-trophy"></i></span>
+                <div class="catalog-badges">
+                    <span class="badge ${lvlBadges[c.mapped_level]||'badge-college'}">${escHtml(c.level)}</span>
+                    ${c.website ? '<span class="badge badge-academic"><i class="fas fa-globe"></i> 官网</span>' : ''}
+                </div>
+            </div>
+            <h4 class="catalog-title">${escHtml(c.name)}</h4>
+            <p class="catalog-desc">${c.organizer ? '主办：'+escHtml(c.organizer.substring(0,60)) : ''}</p>
+            <div class="catalog-footer">
+                <span></span>
+                <span class="catalog-section">${escHtml(c.level)}</span>
+            </div>
+            <div style="margin-top:10px;display:flex;gap:6px;justify-content:flex-end;">
+                <button class="btn btn-outline btn-sm" onclick="viewCompDetail('${c.id}')"><i class="fas fa-info-circle"></i> 查看详情</button>
+                <button class="btn btn-sm ${inPlan?'btn-success':'btn-primary'}" onclick="togglePlan('${c.id}')">
+                    <i class="fas ${inPlan?'fa-check':'fa-calendar-plus'}"></i> ${inPlan?'已加入备赛':'加入备赛'}
+                </button>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function viewCompDetail(compId) {
+    const c = allComps.find(x => x.id === compId);
+    if (!c) return;
+
+    // Find related catalog items
+    fetch('/api/catalog?per_page=300&keyword=' + encodeURIComponent(c.name.substring(0,4)))
+        .then(r => r.json()).then(data => {
+            const related = data.items.filter(i =>
+                i.category === 'academic' &&
+                (i.title.includes('竞赛') || i.title.includes('大赛') || i.title.includes('互联网+') || i.title.includes('挑战杯'))
+            ).slice(0, 5);
+
+            let relatedHtml = '';
+            if (related.length > 0) {
+                relatedHtml = `<div style="border-top:1px solid var(--border);margin-top:12px;padding-top:12px;"><h4 style="font-size:13px;font-weight:600;margin-bottom:8px;"><i class="fas fa-link"></i> 关联综测加分项</h4>
+                ${related.map(r=>`<div style="padding:8px;margin:4px 0;background:var(--surface-alt);border-radius:6px;font-size:12px;"><strong>${escHtml(r.title)}</strong> <span class="badge badge-score">+${r.score}分</span></div>`).join('')}
+                </div>`;
+            }
+
+            document.getElementById('compModalContent').innerHTML = `
+                <h3>${escHtml(c.name)}</h3>
+                <div style="margin:10px 0;"><span class="badge badge-national">${escHtml(c.level)}</span></div>
+                <div style="margin:8px 0;font-size:13px;line-height:1.6;">
+                    <p><strong>主办单位：</strong>${escHtml(c.organizer || '暂无信息')}</p>
+                    ${c.website ? `<p><strong>官方网站：</strong><a href="${escHtml(c.website)}" target="_blank" style="color:var(--primary);">${escHtml(c.website)}</a></p>` : ''}
+                    <p><strong>级别：</strong>${escHtml(c.level)}</p>
+                </div>
+                ${relatedHtml}
+                <div style="margin-top:12px;padding:12px;background:var(--primary-light);border-radius:8px;">
+                    <p style="font-size:12px;color:var(--primary);"><i class="fas fa-lightbulb"></i> <strong>备赛建议：</strong>备赛获奖后可申请综测加分（国家级A类最高+40分）。请关注官网通知，提前组队准备！</p>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-outline btn-sm" onclick="closeCompModal()">关闭</button>
+                    <button class="btn btn-primary btn-sm" onclick="togglePlan('${c.id}');closeCompModal();"><i class="fas fa-calendar-plus"></i> ${myPlans.includes(c.id)?'取消备赛':'加入备赛计划'}</button>
+                </div>`;
+            document.getElementById('compModal').style.display = 'flex';
+        });
+}
+
+function togglePlan(compId) {
+    const idx = myPlans.indexOf(compId);
+    if (idx >= 0) {
+        myPlans.splice(idx, 1);
+        showToast('已取消备赛计划');
+    } else {
+        myPlans.push(compId);
+        showToast('已加入备赛计划！请关注比赛通知，提前准备');
+    }
+    localStorage.setItem('zongce_competition_plans', JSON.stringify(myPlans));
+    document.getElementById('countMyPlan').textContent = myPlans.length;
+    renderCompetitions();
+}
+
+function closeCompModal() { document.getElementById('compModal').style.display = 'none'; }
+
+function escHtml(s) { const d = document.createElement('div'); d.textContent = s||''; return d.innerHTML; }
+function showToast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2500); }
+
+init();
+</script>
+{% endblock %}

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
 import { api, API_BASE, patchJson, postJson } from './api/client'
@@ -111,12 +112,85 @@ interface TemplateData {
   notes: string[]
 }
 
-type UploadedFile = { name: string; url: string; type?: string }
+type UploadedFile = { id?: number; name: string; url: string; type?: string; proofType?: string }
+
+interface AnalyzeMatch {
+  id: string
+  title: string
+  category: string
+  category_name?: string
+  description?: string
+  icon?: string
+  level: string
+  score: number
+  confidence: number
+  decision: string
+  reason: string
+}
+
+interface AnalyzeResult {
+  file_id: number
+  filename: string
+  extracted_text: string
+  has_text_content: boolean
+  matches: AnalyzeMatch[]
+}
+
+interface AdminUser {
+  id: number
+  student_id: string
+  name: string
+  department: string
+  class_name: string
+  item_count: number
+  submission_count: number
+  created_at: string
+}
+
+interface AdminUserItem {
+  id: number
+  catalog_item_id: string
+  title: string
+  score: number
+  source: string
+  submission_id?: number
+  completion_date: string
+  created_at: string
+  category?: string
+  category_name?: string
+  level?: string
+  section?: string
+}
+
+interface CatalogExplorerItem {
+  id: string
+  category: string
+  category_name: string
+  subcategory: string
+  subcategory_name: string
+  title: string
+  description: string
+  level: string
+  score: number
+  icon: string
+  section: string
+  note: string
+  required_proofs?: Array<{ type: string; name: string; description: string }>
+}
+
+interface CatalogFilters {
+  categories: Array<{ key: string; name: string }>
+  levels: string[]
+  subcategories: Array<{ key: string; name: string }>
+  sections: string[]
+}
 
 const store = useAppStore()
+const route = useRoute()
+const router = useRouter()
 
-const studentTabs = ['星盘总览', '机会大厅', '备赛清单', '智审中心', '荣誉星墙']
-const adminTabs = ['数据看板', '活动/比赛发布', '综测审核中心', '规则与材料模板']
+const studentTabs = ['星盘总览', '机会大厅', '备赛清单', '星轨探索', '智审中心', '荣誉星墙']
+const adminTabs = ['数据看板', '用户管理', '活动/比赛发布', '综测审核中心', '规则与材料模板']
 const activeStudentTab = ref('星盘总览')
 const activeAdminTab = ref('数据看板')
 const opportunityMode = ref<OpportunitySource>('notice')
@@ -132,8 +206,22 @@ const honors = ref<HonorItem[]>([])
 const templates = ref<TemplateData | null>(null)
 const ruleDocs = ref<RuleDocument[]>([])
 const adminStats = ref<any>(null)
+const adminUsers = ref<AdminUser[]>([])
+const adminUsersLoading = ref(false)
+const adminUserKeyword = ref('')
+const adminDashboardKeyword = ref('')
+const adminDashboardStatusFilter = ref('')
+const catalogItems = ref<CatalogExplorerItem[]>([])
+const catalogFilters = ref<CatalogFilters>({ categories: [], levels: [], subcategories: [], sections: [] })
+const submittedCatalogIds = ref<Set<string>>(new Set())
+const catalogQuery = reactive({ category: '', level: '', section: '', subcategory: '', keyword: '' })
 const selectedOpportunity = ref<Opportunity | null>(null)
 const selectedDashboardApplication = ref<ApplicationItem | null>(null)
+const selectedAdminUser = ref<AdminUser | null>(null)
+const selectedAdminUserItems = ref<AdminUserItem[]>([])
+const userEditorVisible = ref(false)
+const resetPasswordVisible = ref(false)
+const userItemsVisible = ref(false)
 const draggedHonorId = ref<number | null>(null)
 const brokenOpportunityImages = ref<Set<number>>(new Set())
 
@@ -142,18 +230,19 @@ const filters = reactive({
   keyword: '',
 })
 
-const certForm = reactive({
-  opportunity_id: undefined as number | undefined,
-  title: '',
-  dimension: 'academic' as DimensionKey,
-  award_level: '',
-})
-const certMaterials = reactive<Record<string, boolean>>({})
-const certFiles = ref<UploadedFile[]>([])
-const materialDraftFiles = ref<UploadedFile[]>([])
-const materialSourceUrl = ref('')
 const materialParsing = ref(false)
-const certDropOver = ref(false)
+const materialSubmitMode = ref<'match' | 'targeted'>('match')
+const materialSelectedFiles = ref<File[]>([])
+const materialServerFiles = ref<UploadedFile[]>([])
+const materialAnalysisResults = ref<AnalyzeResult[]>([])
+const materialAddedItems = ref<Array<{ id: string; fileId: number; filename: string; title: string; category: string; category_name?: string; level: string; score: number; confidence: number; status: string }>>([])
+const materialExtraKeyword = ref('')
+const targetCatalogQuery = reactive({ category: '', level: '', keyword: '' })
+const selectedTargetItem = ref<CatalogExplorerItem | null>(null)
+const targetRequiredProofs = ref<Array<{ type: string; name: string; description: string }>>([])
+const targetProofFiles = ref<Record<string, UploadedFile | null>>({})
+const targetCompletionDate = ref('')
+const targetAiVerifyResult = ref('')
 
 const honorForm = reactive({ title: '', category: '证书', image_url: '' })
 const honorDropOver = ref(false)
@@ -189,6 +278,15 @@ const publishImages = ref<Array<{ name: string; url: string; localUrl: string }>
 const publishQr = ref<{ name: string; url: string; localUrl: string } | null>(null)
 const publishDragOver = ref(false)
 const ruleUpload = reactive({ version: '2024-07-12-electronic-info-v1', notes: '' })
+const userEditForm = reactive({
+  id: 0,
+  student_id: '',
+  name: '',
+  password: '000000',
+  department: '电子与信息学院',
+  class_name: '',
+})
+const resetPasswordForm = reactive({ userId: 0, name: '', password: '000000' })
 
 const radarRef = ref<HTMLDivElement | null>(null)
 const barRef = ref<HTMLDivElement | null>(null)
@@ -197,6 +295,7 @@ const modeLabel = computed(() => (store.roleMode === 'student' ? '学生端' : '
 const currentTabs = computed(() => (store.roleMode === 'student' ? studentTabs : adminTabs))
 const currentActiveTab = computed(() => (store.roleMode === 'student' ? activeStudentTab.value : activeAdminTab.value))
 const activeRuleDoc = computed(() => ruleDocs.value.find(doc => doc.is_active) || templates.value?.active_rule_document || null)
+const canViewAdmin = computed(() => store.currentUser?.role === 'admin')
 
 const filteredOpportunities = computed(() => {
   return opportunities.value.filter(item => {
@@ -266,24 +365,88 @@ const auditStats = computed(() => {
   }
 })
 
-const adminDashboardRows = computed(() => adminApplications.value.slice(0, 5))
+const adminDashboardRows = computed(() => {
+  const keyword = adminDashboardKeyword.value.trim().toLowerCase()
+  return adminApplications.value.filter(item => {
+    if (adminDashboardStatusFilter.value && item.status !== adminDashboardStatusFilter.value) return false
+    if (keyword && !`${item.student_name || ''}${item.title}${item.award_level}`.toLowerCase().includes(keyword)) return false
+    return true
+  }).slice(0, 5)
+})
 const adminDashboardFocus = computed(() => {
   if (selectedDashboardApplication.value) {
     const fresh = adminApplications.value.find(item => item.id === selectedDashboardApplication.value?.id)
     if (fresh) return fresh
   }
-  return adminApplications.value.find(item => item.status === 'pending_human') || adminApplications.value[0] || null
+  return adminDashboardRows.value.find(item => item.status === 'pending_human') || adminDashboardRows.value[0] || null
+})
+const adminDashboardKpis = computed(() => ({
+  opportunity_count: Number(adminStats.value?.opportunity_count ?? 0),
+  application_count: Number(adminStats.value?.application_count ?? adminApplications.value.length),
+  pending_count: adminApplications.value.filter(item => ['pending_ai', 'pending_human', 'needs_more'].includes(item.status)).length,
+  approved_score: Number(adminStats.value?.approved_score ?? 0),
+}))
+const adminUserItemTotalScore = computed(() => selectedAdminUserItems.value.reduce((sum, item) => sum + (item.score || 0), 0))
+const catalogExplorerStats = computed(() => ({
+  moral: catalogItems.value.filter(item => item.category === 'moral').length,
+  academic: catalogItems.value.filter(item => item.category === 'academic').length,
+  sports: catalogItems.value.filter(item => item.category === 'sports').length,
+  total: catalogItems.value.length,
+}))
+const filteredCatalogItems = computed(() => {
+  const keyword = catalogQuery.keyword.trim().toLowerCase()
+  return catalogItems.value.filter(item => {
+    if (catalogQuery.category && item.category !== catalogQuery.category) return false
+    if (catalogQuery.level && item.level !== catalogQuery.level) return false
+    if (catalogQuery.section && item.section !== catalogQuery.section) return false
+    if (catalogQuery.subcategory && item.subcategory !== catalogQuery.subcategory) return false
+    if (keyword && !`${item.title}${item.description}${item.section}`.toLowerCase().includes(keyword)) return false
+    return true
+  })
+})
+const filteredTargetCatalogItems = computed(() => {
+  const keyword = targetCatalogQuery.keyword.trim().toLowerCase()
+  return catalogItems.value.filter(item => {
+    if (targetCatalogQuery.category && item.category !== targetCatalogQuery.category) return false
+    if (targetCatalogQuery.level && item.level !== targetCatalogQuery.level) return false
+    if (keyword && !`${item.title}${item.description}${item.section}`.toLowerCase().includes(keyword)) return false
+    return true
+  }).slice(0, 30)
 })
 
 function switchTab(tab: string) {
   if (store.roleMode === 'student') activeStudentTab.value = tab
-  else activeAdminTab.value = tab
+  else {
+    activeAdminTab.value = tab
+    if (tab === '用户管理' && canViewAdmin.value) loadAdminUsers()
+  }
 }
 
 function switchRole(role: 'student' | 'admin') {
+  if (role === 'admin' && !canViewAdmin.value) return
   store.switchRole(role)
+  router.push(role === 'admin' ? '/admin' : '/student')
   nextTick(renderCharts)
 }
+
+async function logout() {
+  await fetch('/api/auth/logout', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { Accept: 'application/json' },
+  })
+  await router.push('/login')
+}
+
+watch(
+  () => route.path,
+  path => {
+    if (path.startsWith('/admin') && canViewAdmin.value) store.switchRole('admin')
+    else store.switchRole('student')
+    nextTick(renderCharts)
+  },
+  { immediate: true },
+)
 
 function dimensionDisplayName(dimension: DimensionKey) {
   const map: Record<DimensionKey, string> = {
@@ -322,6 +485,8 @@ function refreshAiScoreAnalysis() {
 
 function statusLabel(status: string) {
   const map: Record<string, string> = {
+    pending: '待人工审核',
+    auto_approved: 'AI自动通过',
     pending_ai: '待 AI 初审',
     pending_human: '待人工审核',
     needs_more: '需补材料',
@@ -331,30 +496,12 @@ function statusLabel(status: string) {
   return map[status] || status
 }
 
-function statusTagType(status: string) {
-  const map: Record<string, 'success' | 'warning' | 'info' | 'danger' | 'primary'> = {
-    pending_ai: 'info',
-    pending_human: 'success',
-    needs_more: 'warning',
-    approved: 'success',
-    rejected: 'danger',
-  }
-  return map[status] || 'info'
-}
-
 function statusText(app: ApplicationItem) {
   if (app.status === 'needs_more') return '信息存疑需复核'
   if (app.status === 'rejected') return '材料不符合要求'
   if (app.ai_confidence >= 0.85 && app.status !== 'rejected') return 'AI 建议通过'
   if (app.ai_confidence < 0.6) return '材料需人工复核'
   return '材料需人工复核'
-}
-
-function auditTagClass(tag: string) {
-  if (tag.includes('高置信') || tag.includes('待人工确认') || tag.includes('通过')) return 'tag-positive'
-  if (tag.includes('复核') || tag.includes('待确认') || tag.includes('需确认')) return 'tag-warning'
-  if (tag.includes('缺失') || tag.includes('不足') || tag.includes('无法') || tag.includes('严重')) return 'tag-danger'
-  return 'tag-neutral'
 }
 
 function isHighConfidenceAudit(app: ApplicationItem) {
@@ -382,6 +529,44 @@ function confidenceClass(value: number) {
   if (value >= 0.85) return 'confidence-high'
   if (value >= 0.6) return 'confidence-mid'
   return 'confidence-low'
+}
+
+function sourceConfidence(value: number) {
+  return value > 1 ? value / 100 : value
+}
+
+function sourceStatus(status: string) {
+  if (status === 'pending') return 'pending_human'
+  if (status === 'auto_approved') return 'approved'
+  return status || 'pending_human'
+}
+
+function mapSubmissionToApplication(row: any): ApplicationItem {
+  const confidence = sourceConfidence(Number(row.ai_confidence || 0))
+  const missing = row.missing_proofs || row.ai_review?.missing_materials || []
+  return {
+    id: row.id,
+    title: row.title,
+    dimension: row.category === 'sports' ? 'arts_sports' : (row.category || row.dimension || 'academic'),
+    award_level: row.level || row.award_level || row.proof_filename || '证明材料',
+    material_manifest: {},
+    ai_review: {
+      recognized_text: row.ai_reason || '',
+      missing_materials: missing,
+      rule_ref: row.section || '',
+      recommendation: row.review_remarks || row.ai_reason || (confidence >= 0.85 ? 'AI 建议通过，等待人工复核。' : '建议人工复核材料。'),
+    },
+    ai_confidence: confidence,
+    risk_tags: [
+      confidence >= 0.85 ? 'AI高置信' : confidence < 0.7 ? '需人工复核' : '待人工确认',
+      ...(missing.length ? ['材料缺失'] : []),
+    ],
+    suggested_score: Number(row.score || 0),
+    status: sourceStatus(row.status),
+    admin_comment: row.review_remarks || '',
+    student_name: row.student_name || '',
+    opportunity_title: row.title,
+  }
 }
 
 function imgUrl(url: string) {
@@ -488,32 +673,210 @@ function opportunityAttachments(item: Opportunity) {
   return (item.attachments || []).filter(file => Boolean(file.url))
 }
 
+async function loadCatalogExplorer() {
+  const [catalogData, userItems, submissions] = await Promise.all([
+    api<{ items: CatalogExplorerItem[]; filters: CatalogFilters }>('/catalog'),
+    api<{ items: Array<{ catalog_item_id?: string }> }>('/user-items'),
+    api<{ submissions: Array<{ catalog_item_id?: string; status: string }> }>('/submissions'),
+  ])
+  catalogItems.value = catalogData.items || []
+  catalogFilters.value = catalogData.filters || { categories: [], levels: [], subcategories: [], sections: [] }
+  const ids = new Set<string>()
+  for (const item of userItems.items || []) {
+    if (item.catalog_item_id) ids.add(item.catalog_item_id)
+  }
+  for (const item of submissions.submissions || []) {
+    if (item.catalog_item_id && ['pending', 'auto_approved', 'approved'].includes(item.status)) {
+      ids.add(item.catalog_item_id)
+    }
+  }
+  submittedCatalogIds.value = ids
+}
+
+function catalogCategoryClass(category: string) {
+  if (category === 'academic') return 'academic'
+  if (category === 'sports') return 'sports'
+  return 'moral'
+}
+
+function catalogLevelClass(level: string) {
+  if (level.includes('国家')) return 'national'
+  if (level.includes('省')) return 'provincial'
+  if (level.includes('校')) return 'school'
+  return 'college'
+}
+
+async function addCatalogItem(item: CatalogExplorerItem) {
+  try {
+    await postJson('/user-items', {
+      catalog_item_id: item.id,
+      source: 'manual',
+    })
+    submittedCatalogIds.value = new Set([...submittedCatalogIds.value, item.id])
+    ElMessage.success(`已添加「${item.title}」到我的星轨`)
+    await loadAll()
+  } catch (error) {
+    ElMessage.error((error as Error).message)
+  }
+}
+
+function userItemSourceLabel(source: string) {
+  if (source === 'upload') return '上传审核'
+  if (source === 'manual') return '手动添加'
+  return '管理员添加'
+}
+
+async function loadAdminUsers() {
+  if (!canViewAdmin.value) return
+  adminUsersLoading.value = true
+  try {
+    const keyword = adminUserKeyword.value.trim()
+    const data = await api<{ users: AdminUser[] }>(`/admin/users${keyword ? `?keyword=${encodeURIComponent(keyword)}` : ''}`)
+    adminUsers.value = data.users || []
+  } catch (error) {
+    ElMessage.error(`用户加载失败：${(error as Error).message}`)
+  } finally {
+    adminUsersLoading.value = false
+  }
+}
+
+let adminUserSearchTimer: number | undefined
+function debounceAdminUserSearch() {
+  window.clearTimeout(adminUserSearchTimer)
+  adminUserSearchTimer = window.setTimeout(loadAdminUsers, 300)
+}
+
+function openAddAdminUser() {
+  Object.assign(userEditForm, { id: 0, student_id: '', name: '', password: '000000', department: '电子与信息学院', class_name: '' })
+  userEditorVisible.value = true
+}
+
+function openEditAdminUser(user: AdminUser) {
+  Object.assign(userEditForm, { id: user.id, student_id: user.student_id, name: user.name, password: '', department: user.department, class_name: user.class_name })
+  userEditorVisible.value = true
+}
+
+async function saveAdminUser() {
+  try {
+    if (userEditForm.id) {
+      await api(`/admin/users/${userEditForm.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ name: userEditForm.name.trim(), department: userEditForm.department.trim(), class_name: userEditForm.class_name.trim() }),
+      })
+      ElMessage.success('用户已更新')
+    } else {
+      await api('/admin/users', {
+        method: 'POST',
+        body: JSON.stringify({
+          student_id: userEditForm.student_id.trim(),
+          name: userEditForm.name.trim(),
+          password: userEditForm.password.trim(),
+          department: userEditForm.department.trim(),
+          class_name: userEditForm.class_name.trim(),
+        }),
+      })
+      ElMessage.success('用户已创建')
+    }
+    userEditorVisible.value = false
+    await loadAdminUsers()
+  } catch (error) {
+    ElMessage.error((error as Error).message)
+  }
+}
+
+async function disableAdminUser(user: AdminUser) {
+  if (!window.confirm(`确定禁用用户「${user.name}」吗？`)) return
+  try {
+    await api(`/admin/users/${user.id}`, { method: 'DELETE' })
+    ElMessage.success(`已禁用用户「${user.name}」`)
+    await loadAdminUsers()
+  } catch (error) {
+    ElMessage.error((error as Error).message)
+  }
+}
+
+function openResetAdminPassword(user: AdminUser) {
+  Object.assign(resetPasswordForm, { userId: user.id, name: user.name, password: '000000' })
+  resetPasswordVisible.value = true
+}
+
+async function resetAdminPassword() {
+  try {
+    await api(`/admin/users/${resetPasswordForm.userId}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify({ password: resetPasswordForm.password.trim() }),
+    })
+    resetPasswordVisible.value = false
+    ElMessage.success('密码已重置')
+  } catch (error) {
+    ElMessage.error((error as Error).message)
+  }
+}
+
+async function viewAdminUserItems(user: AdminUser) {
+  selectedAdminUser.value = user
+  selectedAdminUserItems.value = []
+  userItemsVisible.value = true
+  try {
+    const data = await api<{ items: AdminUserItem[] }>(`/admin/users/${user.id}/items`)
+    selectedAdminUserItems.value = data.items || []
+  } catch (error) {
+    ElMessage.error(`综测项目加载失败：${(error as Error).message}`)
+  }
+}
+
+async function deleteAdminUserItem(item: AdminUserItem) {
+  if (!selectedAdminUser.value) return
+  if (!window.confirm(`确定删除「${item.title}」吗？此操作会同步影响学生端。`)) return
+  try {
+    await api(`/admin/users/${selectedAdminUser.value.id}/items/${item.id}`, { method: 'DELETE' })
+    ElMessage.success('项目已删除')
+    await viewAdminUserItems(selectedAdminUser.value)
+    await loadAdminUsers()
+  } catch (error) {
+    ElMessage.error((error as Error).message)
+  }
+}
+
 async function loadAll() {
   loading.value = true
   try {
-    const [summaryData, opps, basketData, appData, honorData, templateData, statsData, adminAppData, docsData] = await Promise.all([
+    const [summaryData, opps, basketData, appData, honorData, templateData, docsData] = await Promise.all([
       api<DashboardSummary>(`/dashboard/summary?user_id=${store.studentId}`),
       api<Opportunity[]>(`/opportunities?user_id=${store.studentId}`),
       api<BasketItem[]>(`/plan-basket?user_id=${store.studentId}`),
-      api<ApplicationItem[]>(`/certifications?user_id=${store.studentId}`),
+      api<{ submissions: any[] }>('/submissions'),
       api<HonorItem[]>(`/honor-wall?user_id=${store.studentId}`),
       api<TemplateData>('/material-templates'),
-      api<any>('/admin/stats'),
-      api<ApplicationItem[]>('/admin/certifications'),
       api<RuleDocument[]>('/rule-documents'),
     ])
     summary.value = summaryData
     opportunities.value = opps
     basket.value = basketData
-    applications.value = appData
+    applications.value = (appData.submissions || []).map(mapSubmissionToApplication)
     honors.value = honorData
     templates.value = templateData
-    adminStats.value = statsData
-    adminApplications.value = orderAuditRows(adminAppData)
     ruleDocs.value = docsData
-    for (const material of templateData.strict_materials) {
-      if (!(material in certMaterials)) certMaterials[material] = false
+    if (canViewAdmin.value) {
+      adminApplications.value = []
+      const [statsData, adminAppData] = await Promise.all([
+        api<any>('/admin/stats'),
+        api<{ submissions: any[] }>('/admin/submissions?per_page=200'),
+      ])
+      adminStats.value = {
+        opportunity_count: statsData.opportunity_count ?? 0,
+        application_count: statsData.application_count ?? statsData.total_submissions ?? 0,
+        pending_count: statsData.pending_count ?? statsData.pending_reviews ?? 0,
+        approved_score: statsData.approved_score ?? 0,
+      }
+      adminApplications.value = orderAuditRows((adminAppData.submissions || []).map(mapSubmissionToApplication))
+      await loadAdminUsers()
+    } else {
+      adminStats.value = null
+      adminApplications.value = []
+      adminUsers.value = []
     }
+    await loadCatalogExplorer()
     await nextTick()
     renderCharts()
   } catch (error) {
@@ -615,151 +978,47 @@ async function removeBasket(item: BasketItem) {
 }
 
 function chooseForCert(opportunity: Opportunity) {
-  certForm.opportunity_id = opportunity.id
-  certForm.title = `${opportunity.title} 综测认证`
-  certForm.dimension = opportunity.dimension
+  materialSubmitMode.value = 'targeted'
+  targetCatalogQuery.keyword = opportunity.title
   activeStudentTab.value = '智审中心'
-}
-
-function markCertMaterial(keyword: string) {
-  const target = Object.keys(certMaterials).find(item => item.includes(keyword))
-  if (target) certMaterials[target] = true
 }
 
 function cleanFileTitle(name: string) {
   return name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim().slice(0, 48)
 }
 
-function guessDimension(text: string): DimensionKey {
-  if (text.includes('主持') || text.includes('诗歌') || text.includes('文体') || text.includes('观众')) return 'arts_sports'
-  if (text.includes('志愿') || text.includes('义务') || text.includes('学生工作') || text.includes('安全教育')) return 'moral'
-  return 'academic'
-}
-
-function inferOpportunityFromText(text: string) {
-  return opportunities.value.find(item => {
-    const compactTitle = item.title.replace(/\s/g, '')
-    return compactTitle.includes(text.slice(0, 4)) || text.includes(compactTitle.slice(0, 6))
-  })
-}
-
-async function uploadSingleFile(file: File) {
+async function uploadSingleFile(file: File, proofType = 'general') {
   const form = new FormData()
-  form.append('file', file)
-  return api<{ filename: string; url: string }>('/upload', { method: 'POST', body: form })
-}
-
-async function addCertProofFiles(files: File[]) {
-  if (!files.length) return
-  for (const file of files) {
-    const result = await uploadSingleFile(file)
-    certFiles.value.push({ name: file.name, url: result.url, type: file.type || file.name.split('.').pop() })
-    if (file.type.startsWith('image/')) markCertMaterial('结果证明')
-    if (/\.(pdf|doc|docx)$/i.test(file.name)) {
-      markCertMaterial('通知')
-      markCertMaterial('官方来源')
+  form.append('files', file)
+  form.append('proof_type', proofType)
+  const result = await api<{
+    files?: Array<{ id: number; original_filename?: string; filename?: string; view_url?: string; file_path?: string; file_type?: string }>
+    filename?: string
+    url?: string
+  }>('/upload', { method: 'POST', body: form })
+  const uploaded = result.files?.[0]
+  if (uploaded) {
+    return {
+      id: uploaded.id,
+      filename: uploaded.original_filename || uploaded.filename || file.name,
+      url: uploaded.view_url || (uploaded.file_path ? `/api/uploads/${uploaded.file_path}` : ''),
+      type: uploaded.file_type || file.type || file.name.split('.').pop(),
+      proofType,
     }
   }
-  ElMessage.success(`已添加 ${files.length} 份证明材料`)
-}
-
-async function handleCertProofSelect(event: Event) {
-  const input = event.target as HTMLInputElement
-  await addCertProofFiles(Array.from(input.files || []))
-  input.value = ''
-}
-
-async function onCertProofDrop(event: DragEvent) {
-  event.preventDefault()
-  certDropOver.value = false
-  await addCertProofFiles(Array.from(event.dataTransfer?.files || []))
-}
-
-async function addMaterialDraftFiles(files: File[], type: 'image' | 'document') {
-  if (!files.length) return
-  for (const file of files) {
-    const result = await uploadSingleFile(file)
-    const uploaded = { name: file.name, url: result.url, type }
-    materialDraftFiles.value.push(uploaded)
-    certFiles.value.push(uploaded)
-  }
-  runMaterialAiFill()
-  ElMessage.success('AI 已读取材料并回填下方表单')
-}
-
-async function handleMaterialFileSelect(event: Event, type: 'image' | 'document') {
-  const input = event.target as HTMLInputElement
-  await addMaterialDraftFiles(Array.from(input.files || []), type)
-  input.value = ''
-}
-
-async function onMaterialDrop(event: DragEvent, type: 'image' | 'document') {
-  event.preventDefault()
-  await addMaterialDraftFiles(Array.from(event.dataTransfer?.files || []), type)
-}
-
-function runMaterialAiFill() {
-  const text = [
-    ...materialDraftFiles.value.map(file => file.name),
-    materialSourceUrl.value,
-  ].join(' ')
-  if (!text.trim()) {
-    ElMessage.warning('请先上传图片/文件或填写通知链接')
-    return
-  }
-  materialParsing.value = true
-  const matched = inferOpportunityFromText(text)
-  if (matched) {
-    certForm.opportunity_id = matched.id
-    certForm.title = `${matched.title} 综测认证`
-    certForm.dimension = matched.dimension
-  } else {
-    certForm.title = certForm.title || `${cleanFileTitle(materialDraftFiles.value[0]?.name || '材料')} 认证`
-    certForm.dimension = guessDimension(text)
-  }
-  if (!certForm.award_level) {
-    if (text.includes('一等奖')) certForm.award_level = '一等奖'
-    else if (text.includes('二等奖')) certForm.award_level = '二等奖'
-    else if (text.includes('三等奖')) certForm.award_level = '三等奖'
-    else if (text.includes('证书') || text.toLowerCase().includes('hcia')) certForm.award_level = '证书通过'
-    else certForm.award_level = '待人工确认'
-  }
-  markCertMaterial('通知')
-  markCertMaterial('参赛')
-  markCertMaterial('参与')
-  markCertMaterial('结果')
-  markCertMaterial('官方来源')
-  materialParsing.value = false
-}
-
-async function submitCertification() {
-  if (!certForm.title.trim()) {
-    ElMessage.warning('请填写认证标题')
-    return
-  }
-  await postJson('/certifications', {
-    user_id: store.studentId,
-    opportunity_id: certForm.opportunity_id,
-    title: certForm.title,
-    dimension: certForm.dimension,
-    award_level: certForm.award_level,
-    material_manifest: { ...certMaterials },
-    files: certFiles.value,
-  })
-  ElMessage.success('已提交，AI 初审后进入管理端复核')
-  certForm.opportunity_id = undefined
-  certForm.title = ''
-  certForm.award_level = ''
-  certFiles.value = []
-  Object.keys(certMaterials).forEach(key => { certMaterials[key] = false })
-  await loadAll()
+  return { filename: result.filename || file.name, url: result.url || '', type: file.type, proofType }
 }
 
 async function uploadPublishImageFile(file: File, target: 'cover' | 'qr') {
   const form = new FormData()
-  form.append('file', file)
-  const result = await api<{ filename: string; url: string }>('/upload', { method: 'POST', body: form })
-  const item = { name: file.name, url: result.url, localUrl: URL.createObjectURL(file) }
+  form.append('files', file)
+  const result = await api<{ files?: Array<{ original_filename?: string; view_url?: string; file_path?: string }>; filename?: string; url?: string }>('/upload', { method: 'POST', body: form })
+  const uploaded = result.files?.[0]
+  const item = {
+    name: uploaded?.original_filename || result.filename || file.name,
+    url: uploaded?.view_url || (uploaded?.file_path ? `/api/uploads/${uploaded.file_path}` : result.url || ''),
+    localUrl: URL.createObjectURL(file),
+  }
   if (target === 'cover') {
     publishImages.value.push(item)
   } else {
@@ -1011,18 +1270,217 @@ async function publishOpportunity() {
   await loadAll()
 }
 
+function materialFileIcon(name: string) {
+  const ext = name.split('.').pop()?.toLowerCase() || ''
+  if (ext === 'pdf') return 'PDF'
+  if (['doc', 'docx'].includes(ext)) return 'Word'
+  return 'Image'
+}
+
+function handleMaterialSubmitFileSelect(event: Event) {
+  const input = event.target as HTMLInputElement
+  materialSelectedFiles.value = Array.from(input.files || []).filter(file => {
+    const ext = file.name.split('.').pop()?.toLowerCase() || ''
+    return ['jpg', 'jpeg', 'png', 'bmp', 'webp', 'gif', 'pdf', 'doc', 'docx'].includes(ext)
+  })
+  materialAnalysisResults.value = []
+  materialServerFiles.value = []
+  input.value = ''
+}
+
+function onMaterialSubmitDrop(event: DragEvent) {
+  event.preventDefault()
+  materialSelectedFiles.value = Array.from(event.dataTransfer?.files || []).filter(file => {
+    const ext = file.name.split('.').pop()?.toLowerCase() || ''
+    return ['jpg', 'jpeg', 'png', 'bmp', 'webp', 'gif', 'pdf', 'doc', 'docx'].includes(ext)
+  })
+  materialAnalysisResults.value = []
+  materialServerFiles.value = []
+}
+
+function removeMaterialSelectedFile(index: number) {
+  materialSelectedFiles.value.splice(index, 1)
+}
+
+function matchConfidenceClass(value: number) {
+  if (value >= 80) return 'conf-high'
+  if (value >= 40) return 'conf-medium'
+  return 'conf-low'
+}
+
+async function uploadAndAnalyzeMaterials() {
+  if (!materialSelectedFiles.value.length) {
+    ElMessage.warning('请先选择证明材料')
+    return
+  }
+  materialParsing.value = true
+  try {
+    const form = new FormData()
+    materialSelectedFiles.value.forEach(file => form.append('files', file))
+    const uploadResult = await api<{ files: Array<{ id: number; original_filename: string; view_url?: string; file_path?: string; file_type?: string }> }>('/upload', {
+      method: 'POST',
+      body: form,
+    })
+    materialServerFiles.value = uploadResult.files.map(file => ({
+      id: file.id,
+      name: file.original_filename,
+      url: file.view_url || (file.file_path ? `/api/uploads/${file.file_path}` : ''),
+      type: file.file_type,
+    }))
+    const analysis = await api<{ results: AnalyzeResult[] }>('/analyze', {
+      method: 'POST',
+      body: JSON.stringify({
+        uploaded_file_ids: materialServerFiles.value.map(file => file.id).filter(Boolean),
+        keyword: materialExtraKeyword.value.trim(),
+      }),
+    })
+    materialAnalysisResults.value = analysis.results || []
+    ElMessage.success(`AI分析完成，共匹配 ${materialAnalysisResults.value.reduce((sum, item) => sum + item.matches.length, 0)} 个综测项目`)
+  } catch (error) {
+    ElMessage.error(`AI分析失败：${(error as Error).message}`)
+  } finally {
+    materialParsing.value = false
+  }
+}
+
+async function submitMatchedMaterial(result: AnalyzeResult, match: AnalyzeMatch) {
+  try {
+    const response = await postJson<{ status: string; proofs_complete?: boolean }>('/submissions', {
+      catalog_item_id: match.id,
+      uploaded_file_ids: [result.file_id],
+      ai_confidence: match.confidence,
+      ai_decision: match.decision || (match.confidence >= 80 ? 'high' : 'medium'),
+      ai_reason: match.reason || '',
+    })
+    materialAddedItems.value.push({
+      id: match.id,
+      fileId: result.file_id,
+      filename: result.filename,
+      title: match.title,
+      category: match.category,
+      category_name: match.category_name,
+      level: match.level,
+      score: match.score,
+      confidence: match.confidence,
+      status: response.status,
+    })
+    ElMessage.success(response.status === 'auto_approved' ? 'AI自动通过，已写入我的星轨' : '已提交审核，管理端会收到这条材料')
+    await loadAll()
+  } catch (error) {
+    ElMessage.error((error as Error).message)
+  }
+}
+
+function isMaterialAdded(result: AnalyzeResult, match: AnalyzeMatch) {
+  return materialAddedItems.value.some(item => item.id === match.id && item.fileId === result.file_id)
+}
+
+async function selectTargetCatalogItem(item: CatalogExplorerItem) {
+  selectedTargetItem.value = item
+  targetCompletionDate.value = ''
+  targetAiVerifyResult.value = ''
+  const proofs = item.required_proofs?.length
+    ? item.required_proofs
+    : [{ type: 'general', name: '相关证明材料', description: '请上传能证明该项成果的材料文件' }]
+  targetRequiredProofs.value = proofs
+  targetProofFiles.value = Object.fromEntries(proofs.map(proof => [proof.type, null]))
+}
+
+async function handleTargetProofSelect(event: Event, proofType: string) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  try {
+    const uploaded = await uploadSingleFile(file, proofType)
+    targetProofFiles.value = {
+      ...targetProofFiles.value,
+      [proofType]: { id: uploaded.id, name: uploaded.filename, url: uploaded.url, type: uploaded.type, proofType },
+    }
+    ElMessage.success('材料已上传')
+  } catch (error) {
+    ElMessage.error((error as Error).message)
+  } finally {
+    input.value = ''
+  }
+}
+
+async function submitTargetedMaterial() {
+  if (!selectedTargetItem.value) {
+    ElMessage.warning('请先选择综测项目')
+    return
+  }
+  const uploadedIds = Object.values(targetProofFiles.value).filter(Boolean).map(file => file?.id).filter(Boolean) as number[]
+  if (!uploadedIds.length) {
+    ElMessage.warning('请至少上传一份证明材料')
+    return
+  }
+  materialParsing.value = true
+  try {
+    let aiConfidence = 60
+    let aiDecision = 'medium'
+    let aiReason = ''
+    const verify = await api<{ results: AnalyzeResult[] }>('/analyze', {
+      method: 'POST',
+      body: JSON.stringify({
+        uploaded_file_ids: uploadedIds,
+        keyword: selectedTargetItem.value.title,
+      }),
+    })
+    for (const result of verify.results || []) {
+      for (const match of result.matches || []) {
+        if (match.id === selectedTargetItem.value.id && match.confidence > aiConfidence) {
+          aiConfidence = match.confidence
+          aiReason = match.reason || ''
+        }
+      }
+    }
+    aiDecision = aiConfidence >= 80 ? 'high' : aiConfidence >= 40 ? 'medium' : 'low'
+    const response = await postJson<{ status: string; proofs_complete?: boolean }>('/submissions', {
+      catalog_item_id: selectedTargetItem.value.id,
+      uploaded_file_ids: uploadedIds,
+      completion_date: targetCompletionDate.value,
+      ai_confidence: aiConfidence,
+      ai_decision: aiDecision,
+      ai_reason: aiReason,
+    })
+    targetAiVerifyResult.value = `AI置信度 ${aiConfidence.toFixed(1)}%，${response.status === 'auto_approved' ? '已自动通过' : '已进入管理端待审核'}`
+    ElMessage.success(response.status === 'auto_approved' ? 'AI自动通过，已写入我的星轨' : '已提交审核，管理端会收到这条材料')
+    await loadAll()
+  } catch (error) {
+    ElMessage.error((error as Error).message)
+  } finally {
+    materialParsing.value = false
+  }
+}
+
 async function loadAdminQueue() {
-  const rows = await api<ApplicationItem[]>(`/admin/certifications${auditQueue.value ? `?queue=${auditQueue.value}` : ''}`)
+  const statusMap: Record<string, string> = {
+    high_confidence: '',
+    needs_more: 'pending',
+    risk: 'pending',
+    approved: 'approved',
+    rejected: 'rejected',
+  }
+  const status = statusMap[auditQueue.value] ?? auditQueue.value
+  const data = await api<{ submissions: any[] }>(`/admin/submissions?per_page=200${status ? `&status=${status}` : ''}`)
+  let rows = (data.submissions || []).map(mapSubmissionToApplication)
+  if (auditQueue.value === 'high_confidence') rows = rows.filter(item => item.ai_confidence >= 0.85 && item.status === 'pending_human')
+  if (auditQueue.value === 'risk') rows = rows.filter(item => item.ai_confidence < 0.7 || item.status === 'needs_more')
+  if (auditQueue.value === 'needs_more') rows = rows.filter(item => item.status === 'pending_human' && item.ai_confidence < 0.85)
   adminApplications.value = orderAuditRows(rows)
 }
 
 async function decide(app: ApplicationItem, decision: 'approved' | 'rejected' | 'needs_more') {
   const score = decision === 'approved' ? Number(app.suggested_score || 0) : undefined
-  await postJson(`/admin/certifications/${app.id}/decision`, {
-    decision,
+  await api(`/admin/submissions/${app.id}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+    action: decision === 'approved' ? 'approve' : 'reject',
     score,
     comment: decision === 'approved' ? '人工复核通过，写入综测流水。' : decision === 'needs_more' ? '请补齐学校/学院通知、参赛名单或官方结果证明。' : '材料与细则不匹配，驳回。',
+    remarks: decision === 'approved' ? '人工复核通过，写入综测流水。' : decision === 'needs_more' ? '请补齐学校/学院通知、参赛名单或官方结果证明。' : '材料与细则不匹配，驳回。',
     rule_ref: app.ai_review?.rule_ref || '',
+    }),
   })
   ElMessage.success('审核结果已保存')
   await loadAll()
@@ -1043,8 +1501,8 @@ onMounted(loadAll)
       </div>
 
       <div class="role-switch">
+        <button v-if="canViewAdmin" :class="{ active: store.roleMode === 'admin' }" @click="switchRole('admin')">管理端</button>
         <button :class="{ active: store.roleMode === 'student' }" @click="switchRole('student')">学生端</button>
-        <button :class="{ active: store.roleMode === 'admin' }" @click="switchRole('admin')">管理端</button>
       </div>
 
       <nav class="nav-list">
@@ -1076,10 +1534,11 @@ onMounted(loadAll)
           <button class="login-card">
             <span class="avatar-circle">{{ store.roleMode === 'student' ? '张' : '王' }}</span>
             <span>
-              <strong>{{ store.roleMode === 'student' ? summary?.user.name || '张三' : '王五' }}</strong>
-              <small>{{ store.roleMode === 'student' ? '学生账号' : '管理员（队长）' }}</small>
+              <strong>{{ store.currentUser?.name || (store.roleMode === 'student' ? summary?.user.name || '张三' : '王五') }}</strong>
+              <small>{{ store.roleMode === 'student' ? '学生账号' : '管理员' }}</small>
             </span>
           </button>
+          <button class="logout-btn" @click="logout">退出</button>
         </div>
       </header>
 
@@ -1092,12 +1551,89 @@ onMounted(loadAll)
           <p v-else>结合 AI 初审结果，完成活动发布、规则维护与材料复核。</p>
         </div>
         <div class="identity">
-          <span>{{ store.roleMode === 'student' ? summary?.user.name || '张三' : '王五' }}</span>
-          <small>{{ store.roleMode === 'student' ? '电子信息工程' : '管理端审核员' }}</small>
+          <span>{{ store.currentUser?.name || (store.roleMode === 'student' ? summary?.user.name || '张三' : '王五') }}</span>
+          <small>{{ store.roleMode === 'student' ? store.currentUser?.department || '电子信息工程' : '管理端审核员' }}</small>
         </div>
       </header>
 
       <template v-if="store.roleMode === 'student'">
+        <section v-show="activeStudentTab === '星轨探索'" class="catalog-explorer-page">
+          <div class="explorer-header">
+            <div>
+              <h2><span class="explorer-star">★</span> 星轨探索</h2>
+              <p>浏览电信学院全部206项综测加分项目 · AI审核通过后计入你的星轨得分</p>
+            </div>
+          </div>
+
+          <div class="explorer-stats">
+            <article class="explorer-stat moral">
+              <span>♥</span>
+              <div><small>品德项目</small><strong>{{ catalogExplorerStats.moral }}</strong><em>加分上限30分</em></div>
+            </article>
+            <article class="explorer-stat academic">
+              <span>▮</span>
+              <div><small>学业项目</small><strong>{{ catalogExplorerStats.academic }}</strong><em>加分上限20分</em></div>
+            </article>
+            <article class="explorer-stat sports">
+              <span>♜</span>
+              <div><small>文体项目</small><strong>{{ catalogExplorerStats.sports }}</strong><em>加分上限40分</em></div>
+            </article>
+            <article class="explorer-stat total">
+              <span>☷</span>
+              <div><small>总计项目</small><strong>{{ catalogExplorerStats.total }}</strong><em>206项加分项</em></div>
+            </article>
+          </div>
+
+          <div class="explorer-filters">
+            <select v-model="catalogQuery.category">
+              <option value="">全部板块</option>
+              <option v-for="item in catalogFilters.categories" :key="item.key" :value="item.key">{{ item.name }}</option>
+            </select>
+            <select v-model="catalogQuery.level">
+              <option value="">全部级别</option>
+              <option v-for="level in catalogFilters.levels" :key="level" :value="level">{{ level }}</option>
+            </select>
+            <select v-model="catalogQuery.section">
+              <option value="">全部分类</option>
+              <option v-for="section in catalogFilters.sections" :key="section" :value="section">{{ section }}</option>
+            </select>
+            <select v-model="catalogQuery.subcategory">
+              <option value="">全部子类</option>
+              <option v-for="item in catalogFilters.subcategories" :key="item.key" :value="item.key">{{ item.name }}</option>
+            </select>
+            <input v-model="catalogQuery.keyword" placeholder="搜索项目名称..." />
+            <span>共 {{ filteredCatalogItems.length }} 项</span>
+          </div>
+
+          <div class="catalog-grid">
+            <article
+              v-for="item in filteredCatalogItems"
+              :key="item.id"
+              class="catalog-explorer-card"
+              :class="{ selected: submittedCatalogIds.has(item.id) }"
+            >
+              <div class="catalog-card-top">
+                <span class="catalog-icon-box">{{ item.icon?.includes('trophy') ? '♜' : item.icon?.includes('heart') ? '♥' : item.icon?.includes('book') ? '▮' : '♟' }}</span>
+                <div class="catalog-card-badges">
+                  <span :class="['catalog-badge', catalogCategoryClass(item.category)]">{{ item.category_name }}</span>
+                  <span :class="['catalog-badge', catalogLevelClass(item.level)]">{{ item.level }}</span>
+                </div>
+              </div>
+              <h3>{{ item.title }}</h3>
+              <p>{{ item.description }}</p>
+              <div class="catalog-card-footer">
+                <strong>+{{ item.score }}分</strong>
+                <span>{{ item.section }}</span>
+              </div>
+              <div v-if="item.note" class="catalog-note-line">ⓘ {{ item.note }}</div>
+              <div class="catalog-card-actions">
+                <span v-if="submittedCatalogIds.has(item.id)" class="catalog-submitted">已提交/已通过</span>
+                <button v-else class="btn-primary-sm" @click="addCatalogItem(item)">+ 添加</button>
+              </div>
+            </article>
+          </div>
+        </section>
+
         <section v-show="activeStudentTab === '星盘总览'" class="overview-page">
           <div class="score-hero-card">
             <div class="score-copy">
@@ -1259,101 +1795,165 @@ onMounted(loadAll)
           <el-empty v-if="!basket.length" description="还没有加入备赛清单" />
         </section>
 
-        <section v-show="activeStudentTab === '智审中心'" class="page-stack">
-          <div class="panel material-intake-panel">
-            <div class="material-intake-head">
-              <div>
-                <span class="eyebrow">AI 材料识别</span>
-                <h2>先把你手上的资料丢进来，系统自动回填认证表</h2>
-                <p>支持奖状截图、比赛通知 PDF/Word、报名表、公众号文章或官网链接；识别后仍可手动修改。</p>
-              </div>
-              <el-button type="primary" :loading="materialParsing" @click="runMaterialAiFill">AI 识别并回填</el-button>
-            </div>
-            <div class="material-drop-grid">
-              <label class="big-upload-card" @dragover.prevent @drop.prevent="event => onMaterialDrop(event, 'image')">
-                <input type="file" multiple accept=".jpg,.jpeg,.png,.webp" @change="event => handleMaterialFileSelect(event, 'image')" />
-                <strong>上传奖状/截图</strong>
-                <span>点击选择，或把图片拖进来</span>
-                <em>拖拽图片区</em>
+        <section v-show="activeStudentTab === '智审中心'" class="page-stack material-submit-page">
+          <div class="source-page-header">
+            <h2>材料提交</h2>
+            <p>上传证明材料 · AI自动识别匹配项目 · 定向提交确保材料齐全</p>
+          </div>
+
+          <div class="source-tabs">
+            <button :class="{ active: materialSubmitMode === 'match' }" @click="materialSubmitMode = 'match'">AI智能匹配</button>
+            <button :class="{ active: materialSubmitMode === 'targeted' }" @click="materialSubmitMode = 'targeted'">定向提交</button>
+          </div>
+
+          <div v-if="materialSubmitMode === 'match'" class="upload-layout">
+            <div class="source-card">
+              <header>上传证明材料</header>
+              <label class="source-upload-zone" @dragover.prevent @drop.prevent="onMaterialSubmitDrop">
+                <input type="file" multiple accept=".jpg,.jpeg,.png,.bmp,.webp,.pdf,.doc,.docx" @change="handleMaterialSubmitFileSelect" />
+                <strong>点击或拖拽文件到此处</strong>
+                <span>支持 JPG、PNG、PDF、DOCX 格式</span>
               </label>
-              <label class="big-upload-card" @dragover.prevent @drop.prevent="event => onMaterialDrop(event, 'document')">
-                <input type="file" multiple accept=".pdf,.doc,.docx" @change="event => handleMaterialFileSelect(event, 'document')" />
-                <strong>上传通知/报名表</strong>
-                <span>PDF、Word、名单、证明材料</span>
-                <em>拖拽文件区</em>
-              </label>
-              <div class="big-upload-card link-intake">
-                <strong>粘贴官网/公众号链接</strong>
-                <el-input v-model="materialSourceUrl" placeholder="https://..." @change="runMaterialAiFill" />
-                <span>只填写真实可打开的链接；没有就留空。</span>
+              <div v-if="materialSelectedFiles.length" class="source-file-list">
+                <div v-for="(file, index) in materialSelectedFiles" :key="`${file.name}-${index}`" class="source-file-item">
+                  <b>{{ materialFileIcon(file.name) }}</b>
+                  <span>{{ file.name }}</span>
+                  <small>{{ (file.size / 1024).toFixed(1) }} KB</small>
+                  <button @click="removeMaterialSelectedFile(index)">×</button>
+                </div>
+              </div>
+              <input v-model="materialExtraKeyword" class="source-keyword" placeholder="补充关键词可提高匹配准确率（可选）" />
+              <button class="source-primary-btn" :disabled="!materialSelectedFiles.length || materialParsing" @click="uploadAndAnalyzeMaterials">
+                {{ materialParsing ? 'AI分析中...' : 'AI分析' }}
+              </button>
+              <p class="source-note">文件将上传至服务器，AI 自动提取文字内容并匹配最合适的综测加分项目</p>
+              <div class="source-badges">
+                <span>PDF解析</span>
+                <span>Word解析</span>
+                <span>AI增强</span>
+                <span>关键词匹配</span>
               </div>
             </div>
-            <div v-if="materialDraftFiles.length" class="file-list material-file-list">
-              <span v-for="file in materialDraftFiles" :key="file.url">{{ file.name }}</span>
+
+            <div class="source-card analysis-card">
+              <header>AI分析结果</header>
+              <div v-if="!materialAnalysisResults.length" class="analysis-empty">
+                <strong>🤖</strong>
+                <p>选择文件后点击「AI分析」</p>
+                <span>AI将自动识别证明材料内容，匹配综测项目</span>
+              </div>
+              <div v-else class="analysis-results">
+                <article v-for="result in materialAnalysisResults" :key="result.file_id" class="analysis-file-group">
+                  <h3>{{ result.filename }}</h3>
+                  <p class="source-extracted-text">
+                    {{ result.has_text_content ? result.extracted_text.slice(0, 150) : '未能从文件中提取文字，基于文件名和关键词匹配。' }}
+                  </p>
+                  <div v-for="match in result.matches" :key="`${result.file_id}-${match.id}`" class="source-match-card">
+                    <div>
+                      <strong>{{ match.title }}</strong>
+                      <p>{{ match.description }}</p>
+                      <div class="source-match-badges">
+                        <span>{{ match.category_name || match.category }}</span>
+                        <span>{{ match.level }}</span>
+                        <span>+{{ match.score }}分</span>
+                      </div>
+                    </div>
+                    <div class="source-confidence">
+                      <span :class="matchConfidenceClass(match.confidence)">{{ match.confidence.toFixed(1) }}%</span>
+                      <button class="source-primary-small" :disabled="isMaterialAdded(result, match)" @click="submitMatchedMaterial(result, match)">
+                        {{ isMaterialAdded(result, match) ? '已提交' : '提交审核' }}
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              </div>
             </div>
           </div>
 
-          <div class="grid form-grid cert-grid">
-          <div class="panel">
-            <h2>提交综测加分认证</h2>
-            <el-form label-position="top">
-              <el-form-item label="关联活动/比赛">
-                <el-select v-model="certForm.opportunity_id" filterable clearable placeholder="可选">
-                  <el-option v-for="item in opportunities" :key="item.id" :label="item.title" :value="item.id" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="认证标题">
-                <el-input v-model="certForm.title" placeholder="例如：蓝桥杯省级三等奖认证" />
-              </el-form-item>
-              <el-form-item label="综测归属">
-                <el-radio-group v-model="certForm.dimension">
-                  <el-radio-button label="moral">德育</el-radio-button>
-                  <el-radio-button label="academic">学业</el-radio-button>
-                  <el-radio-button label="arts_sports">文体</el-radio-button>
-                </el-radio-group>
-              </el-form-item>
-              <el-form-item label="奖项/结果">
-                <el-input v-model="certForm.award_level" placeholder="省级三等奖、参与、证书通过等" />
-              </el-form-item>
-              <el-form-item label="严格材料清单">
-                <div class="check-list">
-                  <el-checkbox v-for="material in templates?.strict_materials" :key="material" v-model="certMaterials[material]">
-                    {{ material }}
-                  </el-checkbox>
-                </div>
-              </el-form-item>
-              <el-form-item label="上传证明材料">
-                <label
-                  :class="['proof-upload-box', { active: certDropOver }]"
-                  @dragover.prevent="certDropOver = true"
-                  @dragleave.prevent="certDropOver = false"
-                  @drop="onCertProofDrop"
+          <div v-else class="targeted-submit-grid">
+            <div class="source-card">
+              <header>选择综测项目</header>
+              <div class="target-filters">
+                <select v-model="targetCatalogQuery.category">
+                  <option value="">全部板块</option>
+                  <option value="moral">品德行为</option>
+                  <option value="academic">学业表现</option>
+                  <option value="sports">文体表现</option>
+                </select>
+                <select v-model="targetCatalogQuery.level">
+                  <option value="">全部级别</option>
+                  <option value="国家级">国家级</option>
+                  <option value="省级">省级</option>
+                  <option value="校级">校级</option>
+                  <option value="院级">院级</option>
+                  <option value="班级">班级</option>
+                </select>
+                <input v-model="targetCatalogQuery.keyword" placeholder="输入项目名称关键词搜索..." />
+              </div>
+              <div class="target-results">
+                <article
+                  v-for="item in filteredTargetCatalogItems"
+                  :key="item.id"
+                  :class="['target-catalog-card', { active: selectedTargetItem?.id === item.id }]"
+                  @click="selectTargetCatalogItem(item)"
                 >
-                  <input type="file" multiple accept=".jpg,.jpeg,.png,.webp,.pdf,.doc,.docx" @change="handleCertProofSelect" />
-                  <strong>点击或拖拽上传证明材料</strong>
-                  <span>比赛通知、参赛名单、结果证明、官方来源证明都可以放在这里。</span>
-                </label>
-                <div class="file-list">
-                  <span v-for="file in certFiles" :key="file.url">{{ file.name }}</span>
+                  <strong>{{ item.title }}</strong>
+                  <p>{{ item.description }}</p>
+                  <span>{{ item.category_name }}</span>
+                  <span>{{ item.level }}</span>
+                  <b>+{{ item.score }}分</b>
+                </article>
+              </div>
+            </div>
+
+            <div class="source-card">
+              <header>上传证明材料</header>
+              <template v-if="selectedTargetItem">
+                <div class="selected-target">
+                  <strong>{{ selectedTargetItem.title }}</strong>
+                  <span>+{{ selectedTargetItem.score }}分</span>
                 </div>
-              </el-form-item>
-              <el-button type="primary" size="large" @click="submitCertification">提交 AI 初审</el-button>
-            </el-form>
-          </div>
-          <div class="panel">
-            <h2>我的认证进度</h2>
-            <article v-for="item in applications" :key="item.id" class="audit-card">
-              <div class="audit-head">
-                <strong>{{ item.title }}</strong>
-                <el-tag :type="statusTagType(item.status)" effect="light">{{ statusLabel(item.status) }}</el-tag>
+                <div v-for="proof in targetRequiredProofs" :key="proof.type" class="target-proof-row">
+                  <div>
+                    <strong>{{ proof.name }}</strong>
+                    <p>{{ proof.description }}</p>
+                  </div>
+                  <label>
+                    <input type="file" accept=".jpg,.jpeg,.png,.bmp,.webp,.pdf,.doc,.docx" @change="event => handleTargetProofSelect(event, proof.type)" />
+                    {{ targetProofFiles[proof.type]?.name || '上传' }}
+                  </label>
+                </div>
+                <label class="target-date">
+                  项目完成日期
+                  <input v-model="targetCompletionDate" type="date" />
+                </label>
+                <p v-if="targetAiVerifyResult" class="target-ai-result">{{ targetAiVerifyResult }}</p>
+                <button class="source-primary-btn" :disabled="materialParsing" @click="submitTargetedMaterial">
+                  {{ materialParsing ? '提交中...' : '提交审核' }}
+                </button>
+              </template>
+              <div v-else class="analysis-empty">
+                <p>先在左侧选择要申报的综测项目</p>
               </div>
-              <p>AI 置信度 {{ Math.round(item.ai_confidence * 100) }}% ｜ 建议 {{ item.suggested_score }} 分</p>
-              <div class="risk-tags">
-                <span v-for="tag in item.risk_tags" :key="tag" :class="auditTagClass(tag)">{{ tag }}</span>
-              </div>
-              <p class="muted">{{ item.admin_comment || item.ai_review?.recommendation }}</p>
-            </article>
+            </div>
           </div>
+
+          <div v-if="materialAddedItems.length" class="source-card added-materials">
+            <header>已提交/加入</header>
+            <table>
+              <thead><tr><th>来源文件</th><th>匹配项目</th><th>大类</th><th>级别</th><th>得分</th><th>置信度</th><th>状态</th></tr></thead>
+              <tbody>
+                <tr v-for="item in materialAddedItems" :key="`${item.fileId}-${item.id}`">
+                  <td>{{ item.filename }}</td>
+                  <td>{{ item.title }}</td>
+                  <td>{{ item.category_name || item.category }}</td>
+                  <td>{{ item.level }}</td>
+                  <td>+{{ item.score }}</td>
+                  <td>{{ item.confidence.toFixed(1) }}%</td>
+                  <td>{{ statusLabel(sourceStatus(item.status)) }}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </section>
 
@@ -1428,22 +2028,22 @@ onMounted(loadAll)
           <div class="dashboard-kpi-row">
             <article class="dashboard-kpi kpi-blue">
               <span>♟ 活动/赛事总数</span>
-              <strong>{{ adminStats?.opportunity_count ?? 0 }}</strong>
+              <strong>{{ adminDashboardKpis.opportunity_count }}</strong>
               <em>项</em>
             </article>
             <article class="dashboard-kpi kpi-green">
               <span>◎ 认证申请总数</span>
-              <strong>{{ adminStats?.application_count ?? 0 }}</strong>
+              <strong>{{ adminDashboardKpis.application_count }}</strong>
               <em>条</em>
             </article>
             <article class="dashboard-kpi kpi-red">
               <span>ⓘ 当前待处理</span>
-              <strong>{{ adminStats?.pending_count ?? 0 }}</strong>
+              <strong>{{ adminDashboardKpis.pending_count }}</strong>
               <em>条</em>
             </article>
             <article class="dashboard-kpi kpi-gray">
               <span>◴ 已入账原始分</span>
-              <strong>{{ adminStats?.approved_score ?? 0 }}</strong>
+              <strong>{{ adminDashboardKpis.approved_score }}</strong>
               <em>分</em>
             </article>
           </div>
@@ -1452,15 +2052,16 @@ onMounted(loadAll)
             <section class="dashboard-panel review-list-panel">
               <div class="panel-title-row">
                 <h2>实时综测审核列表</h2>
-                <button class="panel-action">进入审核中心</button>
+                <button class="panel-action" @click="activeAdminTab = '综测审核中心'">进入审核中心</button>
               </div>
               <div class="dashboard-filters">
-                <input class="dashboard-input" placeholder="搜索学生姓名或材料..." />
-                <select class="dashboard-input">
-                  <option>审核状态</option>
-                  <option>待人工审核</option>
-                  <option>需补材料</option>
-                  <option>已驳回</option>
+                <input v-model="adminDashboardKeyword" class="dashboard-input" placeholder="搜索学生姓名或材料..." />
+                <select v-model="adminDashboardStatusFilter" class="dashboard-input">
+                  <option value="">审核状态</option>
+                  <option value="pending_human">待人工审核</option>
+                  <option value="needs_more">需补材料</option>
+                  <option value="approved">已入账</option>
+                  <option value="rejected">已驳回</option>
                 </select>
               </div>
               <div class="dashboard-table">
@@ -1473,26 +2074,28 @@ onMounted(loadAll)
                   <span>操作</span>
                 </div>
                 <div v-for="item in adminDashboardRows" :key="item.id" class="dashboard-table-row">
-                  <span>{{ item.student_name || '张三' }}</span>
+                  <span>{{ item.student_name || '-' }}</span>
                   <span>{{ item.award_level || item.dimension }}</span>
                   <span>{{ item.title }}</span>
                   <strong :class="confidenceClass(item.ai_confidence)">{{ Math.round(item.ai_confidence * 100) }}%</strong>
                   <span :class="['dashboard-status', confidenceClass(item.ai_confidence)]">{{ statusLabel(item.status) }}</span>
                   <button class="dashboard-link" @click="selectDashboardApplication(item)">查看详情</button>
                 </div>
+                <div v-if="!adminDashboardRows.length" class="dashboard-table-empty">暂无真实审核申请</div>
               </div>
             </section>
 
             <aside class="dashboard-panel student-detail-panel">
               <h2>学生综测详情</h2>
               <div v-if="adminDashboardFocus" class="student-detail-card">
-                <h3>{{ adminDashboardFocus.student_name || '张三' }} <span>电子信息工程</span></h3>
+                <h3>{{ adminDashboardFocus.student_name || '-' }} <span>{{ adminDashboardFocus.award_level || '综测材料' }}</span></h3>
                 <div class="detail-matrix">
                   <span>材料名称</span><strong>{{ adminDashboardFocus.title }}</strong>
                   <span>当前建议</span><strong>{{ adminDashboardFocus.suggested_score }} 分</strong>
                   <span>审核状态</span><strong>{{ statusLabel(adminDashboardFocus.status) }}</strong>
                 </div>
               </div>
+              <div v-else class="student-detail-empty">暂无可查看的真实审核记录</div>
               <h3 class="trend-title">近期审核趋势</h3>
               <div class="trend-chart">
                 <svg viewBox="0 0 420 220" aria-label="近期审核趋势图">
@@ -1784,6 +2387,52 @@ onMounted(loadAll)
           </div>
         </section>
 
+        <section v-show="activeAdminTab === '用户管理'" class="admin-users-page" v-loading="adminUsersLoading">
+          <div class="admin-users-head">
+            <div>
+              <h2>星轨用户管理</h2>
+              <p>管理学生账号 · 添加/编辑/禁用用户</p>
+            </div>
+            <button class="btn-primary-sm" @click="openAddAdminUser">+ 添加用户</button>
+          </div>
+
+          <div class="admin-users-toolbar">
+            <input v-model="adminUserKeyword" placeholder="搜索学号、姓名或院系..." @input="debounceAdminUserSearch" />
+            <span>共 {{ adminUsers.length }} 人</span>
+          </div>
+
+          <div class="admin-users-table">
+            <div class="admin-users-row admin-users-row-head">
+              <span>ID</span>
+              <span>学号</span>
+              <span>姓名</span>
+              <span>院系</span>
+              <span>班级</span>
+              <span>综测项目数</span>
+              <span>提交数</span>
+              <span>注册时间</span>
+              <span>操作</span>
+            </div>
+            <div v-for="user in adminUsers" :key="user.id" class="admin-users-row">
+              <span>#{{ user.id }}</span>
+              <strong>{{ user.student_id }}</strong>
+              <span>{{ user.name }}</span>
+              <span>{{ user.department }}</span>
+              <span>{{ user.class_name || '-' }}</span>
+              <span>{{ user.item_count }}</span>
+              <span>{{ user.submission_count }}</span>
+              <span>{{ user.created_at }}</span>
+              <span class="admin-user-actions">
+                <button title="查看综测" @click="viewAdminUserItems(user)">★</button>
+                <button title="编辑" @click="openEditAdminUser(user)">✎</button>
+                <button title="重置密码" @click="openResetAdminPassword(user)">●</button>
+                <button class="danger" title="禁用" @click="disableAdminUser(user)">⊘</button>
+              </span>
+            </div>
+            <div v-if="!adminUsers.length" class="admin-users-empty">暂无用户</div>
+          </div>
+        </section>
+
         <section v-show="activeAdminTab === '规则与材料模板'" class="rules-page">
           <div class="rule-document-card">
             <div>
@@ -1835,6 +2484,63 @@ onMounted(loadAll)
       </template>
       </section>
     </section>
+
+    <el-dialog v-model="userEditorVisible" width="520px" class="user-edit-dialog">
+      <template #header>
+        <strong>{{ userEditForm.id ? '编辑用户' : '添加用户' }}</strong>
+      </template>
+      <div class="user-edit-body">
+        <label>学号</label>
+        <input v-model="userEditForm.student_id" :disabled="!!userEditForm.id" placeholder="请输入学号" />
+        <label>姓名</label>
+        <input v-model="userEditForm.name" placeholder="请输入姓名" />
+        <template v-if="!userEditForm.id">
+          <label>密码</label>
+          <input v-model="userEditForm.password" placeholder="默认密码 000000" />
+        </template>
+        <label>院系</label>
+        <input v-model="userEditForm.department" />
+        <label>班级</label>
+        <input v-model="userEditForm.class_name" placeholder="如：通信2101班" />
+      </div>
+      <template #footer>
+        <el-button @click="userEditorVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveAdminUser">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="resetPasswordVisible" width="420px">
+      <template #header>
+        <strong>重置密码</strong>
+      </template>
+      <div class="user-edit-body">
+        <p class="muted">为用户「{{ resetPasswordForm.name }}」重置密码</p>
+        <label>新密码</label>
+        <input v-model="resetPasswordForm.password" />
+      </div>
+      <template #footer>
+        <el-button @click="resetPasswordVisible = false">取消</el-button>
+        <el-button type="primary" @click="resetAdminPassword">确认重置</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="userItemsVisible" width="760px">
+      <template #header>
+        <strong>综测项目 - {{ selectedAdminUser?.name }}（{{ selectedAdminUser?.student_id }}）</strong>
+      </template>
+      <div class="admin-user-items">
+        <p class="muted">共 {{ selectedAdminUserItems.length }} 项 · 总分 {{ adminUserItemTotalScore }}</p>
+        <div v-if="!selectedAdminUserItems.length" class="admin-users-empty">该用户暂无综测项目</div>
+        <div v-for="item in selectedAdminUserItems" :key="item.id" class="admin-user-item-row">
+          <strong>{{ item.title }}</strong>
+          <span>{{ item.category_name || '-' }}</span>
+          <span>{{ item.level || '-' }}</span>
+          <em>+{{ item.score }}</em>
+          <span>{{ userItemSourceLabel(item.source) }}</span>
+          <button class="danger" @click="deleteAdminUserItem(item)">删除</button>
+        </div>
+      </div>
+    </el-dialog>
 
     <el-dialog :model-value="!!selectedOpportunity" width="760px" class="detail-dialog" @close="selectedOpportunity = null">
       <template #header>

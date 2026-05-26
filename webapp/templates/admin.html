@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}管理仪表盘 - 综测星轨{% endblock %}
+{% block content %}
+<div class="page">
+    <div class="page-header">
+        <h1><i class="fas fa-tachometer-alt"></i> 星轨管理中心</h1>
+        <p>综测星轨系统管理中心 · {{ current_user.name }}</p>
+    </div>
+
+    <div class="admin-stats" id="adminStats">
+        <div class="admin-stat-card">
+            <div class="admin-stat-icon blue"><i class="fas fa-user-graduate"></i></div>
+            <div>
+                <div class="admin-stat-value" id="statStudents">--</div>
+                <div class="admin-stat-label">注册学生数</div>
+            </div>
+        </div>
+        <div class="admin-stat-card">
+            <div class="admin-stat-icon amber"><i class="fas fa-clock"></i></div>
+            <div>
+                <div class="admin-stat-value" id="statPending">--</div>
+                <div class="admin-stat-label">待审核提交</div>
+            </div>
+        </div>
+        <div class="admin-stat-card">
+            <div class="admin-stat-icon green"><i class="fas fa-check-circle"></i></div>
+            <div>
+                <div class="admin-stat-value" id="statApproved">--</div>
+                <div class="admin-stat-label">今日通过</div>
+            </div>
+        </div>
+        <div class="admin-stat-card">
+            <div class="admin-stat-icon purple"><i class="fas fa-file-alt"></i></div>
+            <div>
+                <div class="admin-stat-value" id="statSubmissions">--</div>
+                <div class="admin-stat-label">总提交数</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header"><h2><i class="fas fa-bolt"></i> 快捷操作</h2></div>
+        <div class="card-body" style="display:flex; gap:12px; flex-wrap:wrap;">
+            <a href="/admin/submissions" class="btn btn-primary"><i class="fas fa-clipboard-check"></i> 审核队列</a>
+            <a href="/admin/users" class="btn btn-outline"><i class="fas fa-users"></i> 用户管理</a>
+            <a href="/admin/items" class="btn btn-outline"><i class="fas fa-list-alt"></i> 项目管理</a>
+            <a href="/" class="btn btn-outline"><i class="fas fa-eye"></i> 查看学生端</a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+async function loadStats() {
+    try {
+        const resp = await fetch('/api/admin/stats');
+        const data = await resp.json();
+        document.getElementById('statStudents').textContent = data.total_students;
+        document.getElementById('statPending').textContent = data.pending_reviews;
+        document.getElementById('statApproved').textContent = data.approved_today;
+        document.getElementById('statSubmissions').textContent = data.total_submissions;
+    } catch (err) {
+        console.error('Failed to load stats:', err);
+    }
+}
+loadStats();
+</script>
+{% endblock %}

@@ -1,0 +1,427 @@
+{% extends "base.html" %}
+{% block title %}星轨探索 - 综测星轨{% endblock %}
+{% block content %}
+<div class="page">
+    <div class="page-header" style="padding:24px 0 8px;margin-bottom:20px;">
+        <h1 style="font-size:28px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:10px;"><i class="fas fa-star" style="color:var(--primary);"></i> 星轨探索</h1>
+        <p style="color:var(--text-muted);margin-top:4px;font-size:14px;">浏览电信学院全部206项综测加分项目 · AI审核通过后计入你的星轨得分</p>
+    </div>
+
+    <div class="stats-grid" style="grid-template-columns: repeat(4, 1fr);margin-bottom:20px;">
+        <div class="stat-card stat-accent-moral">
+            <div class="stat-icon moral"><i class="fas fa-heart"></i></div>
+            <div class="stat-info"><h3>品德项目</h3><div class="value" id="countMoral">--</div><div class="sub">加分上限30分</div></div>
+        </div>
+        <div class="stat-card stat-accent-academic">
+            <div class="stat-icon academic"><i class="fas fa-book-open"></i></div>
+            <div class="stat-info"><h3>学业项目</h3><div class="value" id="countAcademic">--</div><div class="sub">加分上限20分</div></div>
+        </div>
+        <div class="stat-card stat-accent-sports">
+            <div class="stat-icon sports"><i class="fas fa-trophy"></i></div>
+            <div class="stat-info"><h3>文体项目</h3><div class="value" id="countSports">--</div><div class="sub">加分上限40分</div></div>
+        </div>
+        <div class="stat-card stat-accent-teal">
+            <div class="stat-icon teal"><i class="fas fa-list"></i></div>
+            <div class="stat-info"><h3>总计项目</h3><div class="value" id="countAll">--</div><div class="sub">206项加分项</div></div>
+        </div>
+    </div>
+
+    <!-- Filter bar -->
+    <div class="card">
+        <div class="card-body">
+            <div class="filter-bar">
+                <select id="filterCategory"><option value="">全部板块</option><option value="moral">品德行为</option><option value="academic">学业表现</option><option value="sports">文体表现</option></select>
+                <select id="filterLevel"><option value="">全部级别</option><option value="国家级">国家级</option><option value="省级">省级</option><option value="校级">校级</option><option value="院级">院级</option><option value="班级">班级</option></select>
+                <select id="filterSection"><option value="">全部分类</option></select>
+                <select id="filterSubcategory"><option value="">全部子类</option></select>
+                <input type="text" id="filterKeyword" placeholder="搜索项目名称...">
+                <span class="text-muted" style="font-size:14px;" id="resultCount"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Catalog Grid -->
+    <div id="catalogContainer" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px;">
+        <div class="spinner"></div>
+    </div>
+</div>
+
+<!-- ===== Add/Submit Modal ===== -->
+<div class="modal-overlay" id="addModal" style="display:none;">
+    <div class="modal-box" style="max-width:640px; max-height:90vh; overflow-y:auto;">
+        <div id="addModalContent"></div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let allItems = [];
+let mySubmittedIds = new Set(); // IDs already submitted/approved
+const CAT_BADGES = {moral:'badge-moral', academic:'badge-academic', sports:'badge-sports'};
+const LVL_BADGES = {'国家级':'badge-national','省级':'badge-provincial','校级':'badge-school','院级':'badge-college','班级':'badge-college'};
+const CAT_NAMES = {moral:'品德行为', academic:'学业表现', sports:'文体表现'};
+
+async function init() {
+    // Load catalog
+    const res = await fetch('/api/catalog');
+    const data = await res.json();
+    allItems = data.items;
+
+    // Populate filters
+    data.filters.sections.forEach(s => {
+        document.getElementById('filterSection').innerHTML += `<option value="${s}">${s}</option>`;
+    });
+    data.filters.subcategories.forEach(s => {
+        document.getElementById('filterSubcategory').innerHTML += `<option value="${s.key}">${s.name}</option>`;
+    });
+
+    // Stats
+    document.getElementById('countMoral').textContent = allItems.filter(i => i.category==='moral').length;
+    document.getElementById('countAcademic').textContent = allItems.filter(i => i.category==='academic').length;
+    document.getElementById('countSports').textContent = allItems.filter(i => i.category==='sports').length;
+    document.getElementById('countAll').textContent = allItems.length;
+
+    // Load user's submitted items
+    try {
+        const uResp = await fetch('/api/user-items');
+        const uData = await uResp.json();
+        uData.items.forEach(i => { if (i.catalog_item_id) mySubmittedIds.add(i.catalog_item_id); });
+    } catch(e) {}
+
+    // Also load pending submissions
+    try {
+        const sResp = await fetch('/api/submissions');
+        const sData = await sResp.json();
+        sData.submissions.forEach(s => {
+            if (s.catalog_item_id && ['pending','auto_approved','approved'].includes(s.status)) {
+                mySubmittedIds.add(s.catalog_item_id);
+            }
+        });
+    } catch(e) {}
+
+    renderCatalog(allItems);
+
+    // Filter listeners
+    document.querySelectorAll('#filterCategory,#filterLevel,#filterSection,#filterSubcategory').forEach(el => {
+        el.addEventListener('change', applyFilters);
+    });
+    document.getElementById('filterKeyword').addEventListener('input', debounce(applyFilters, 300));
+
+    // Close modal on overlay click
+    document.getElementById('addModal').addEventListener('click', function(e) {
+        if (e.target === this) closeAddModal();
+    });
+}
+
+function applyFilters() {
+    const cat = document.getElementById('filterCategory').value;
+    const lvl = document.getElementById('filterLevel').value;
+    const sec = document.getElementById('filterSection').value;
+    const sub = document.getElementById('filterSubcategory').value;
+    const kw = document.getElementById('filterKeyword').value.toLowerCase();
+
+    let filtered = allItems;
+    if (cat) filtered = filtered.filter(i => i.category === cat);
+    if (lvl) filtered = filtered.filter(i => i.level === lvl);
+    if (sec) filtered = filtered.filter(i => i.section === sec);
+    if (sub) filtered = filtered.filter(i => i.subcategory === sub);
+    if (kw) filtered = filtered.filter(i => i.title.toLowerCase().includes(kw) || i.description.toLowerCase().includes(kw));
+
+    document.getElementById('resultCount').textContent = `共 ${filtered.length} 项`;
+    renderCatalog(filtered);
+}
+
+function renderCatalog(items) {
+    document.getElementById('catalogContainer').innerHTML = items.map(item => {
+        const isSubmitted = mySubmittedIds.has(item.id);
+        return `
+        <div class="catalog-item ${isSubmitted ? 'selected' : ''}" id="item-${item.id}">
+            <div class="catalog-item-top">
+                <span class="catalog-icon" style="width:42px;height:42px;font-size:17px;background:var(--surface-alt);">
+                    <i class="fas ${item.icon || 'fa-star'}"></i>
+                </span>
+                <div class="catalog-badges">
+                    <span class="badge ${CAT_BADGES[item.category] || 'badge-moral'}">${escHtml(item.category_name)}</span>
+                    <span class="badge ${LVL_BADGES[item.level] || 'badge-college'}">${escHtml(item.level)}</span>
+                </div>
+            </div>
+            <h4 class="catalog-title">${escHtml(item.title)}</h4>
+            <p class="catalog-desc">${escHtml(item.description)}</p>
+            <div class="catalog-footer">
+                <span class="catalog-score">+${item.score}分</span>
+                <span class="catalog-section">${escHtml(item.section || '')}</span>
+            </div>
+            ${item.note ? `<div class="catalog-note"><i class="fas fa-info-circle"></i> ${escHtml(item.note)}</div>` : ''}
+            <div style="margin-top:12px; text-align:right;">
+                ${isSubmitted
+                    ? `<span style="color:var(--success);font-size:12px;font-weight:600;"><i class="fas fa-check-circle"></i> 已提交/已通过</span>`
+                    : `<button class="btn btn-primary btn-sm" onclick="openAddModal('${item.id}')"><i class="fas fa-plus"></i> 添加</button>`
+                }
+            </div>
+        </div>`;
+    }).join('');
+    document.getElementById('resultCount').textContent = `共 ${items.length} 项`;
+}
+
+// ============ Add Modal ============
+let currentAddItem = null;
+let modalUploadedFiles = {};
+let modalAiResult = null;
+
+async function openAddModal(itemId) {
+    currentAddItem = allItems.find(i => i.id === itemId);
+    if (!currentAddItem) return;
+
+    // Fetch required proofs
+    const resp = await fetch(`/api/catalog/${itemId}/proofs`);
+    const proofData = await resp.json();
+    const proofs = proofData.required_proofs;
+
+    modalUploadedFiles = {};
+    proofs.forEach(p => { modalUploadedFiles[p.type] = null; });
+    modalAiResult = null;
+
+    const content = document.getElementById('addModalContent');
+    content.innerHTML = `
+        <div style="margin-bottom:16px;">
+            <h3 style="font-size:16px;font-weight:700;">${escHtml(currentAddItem.title)}</h3>
+            <div style="margin-top:4px;">
+                <span class="badge ${CAT_BADGES[currentAddItem.category]||'badge-moral'}">${escHtml(currentAddItem.category_name)}</span>
+                <span class="badge ${LVL_BADGES[currentAddItem.level]||'badge-college'}">${escHtml(currentAddItem.level)}</span>
+                <span class="badge badge-score">+${currentAddItem.score}分</span>
+            </div>
+            <p style="font-size:12px;color:var(--text-muted);margin-top:4px;">${escHtml(currentAddItem.description)}</p>
+        </div>
+
+        <div style="border-top:1px solid var(--border); padding-top:12px;">
+            <h4 style="font-size:13px;font-weight:600;margin-bottom:8px;"><i class="fas fa-clipboard-list"></i> 需要提交的证明材料（${proofs.length}项）</h4>
+            ${proofs.map(p => `
+            <div class="proof-row" style="display:flex;align-items:center;gap:10px;padding:10px;margin-bottom:6px;background:var(--surface-alt);border-radius:8px;">
+                <div style="flex:1;min-width:0;">
+                    <strong style="font-size:13px;">${escHtml(p.name)}</strong>
+                    <p style="font-size:11px;color:var(--text-muted);margin:2px 0;">${escHtml(p.description)}</p>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+                    <input type="file" accept=".jpg,.jpeg,.png,.bmp,.webp,.pdf,.docx,.doc" id="modal-file-${p.type}" onchange="handleModalFile('${p.type}')" style="display:none;">
+                    <button class="btn btn-outline btn-sm" onclick="document.getElementById('modal-file-${p.type}').click()">
+                        <i class="fas fa-upload"></i> 上传
+                    </button>
+                    <span id="modal-status-${p.type}" style="font-size:12px;color:var(--text-light);min-width:50px;">未上传</span>
+                </div>
+            </div>
+            `).join('')}
+        </div>
+
+        <!-- Completion date -->
+        <div class="form-group" style="margin-top:12px;">
+            <label>项目完成日期</label>
+            <input type="date" id="modalCompleteDate" style="width:100%;padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;">
+        </div>
+
+        <!-- AI Analyze button -->
+        <div style="margin-top:12px;">
+            <button class="btn btn-outline btn-sm" id="btnModalAnalyze" onclick="runModalAiAnalysis()">
+                <i class="fas fa-robot"></i> AI分析材料
+            </button>
+        </div>
+
+        <!-- AI Result -->
+        <div id="modalAiResult" style="margin-top:10px;"></div>
+
+        <!-- Submit -->
+        <div class="modal-actions">
+            <button class="btn btn-outline btn-sm" onclick="closeAddModal()">取消</button>
+            <button class="btn btn-primary btn-sm" id="btnModalSubmit" onclick="submitModalItem()" disabled>
+                <i class="fas fa-paper-plane"></i> 提交审核
+            </button>
+        </div>
+    `;
+
+    document.getElementById('addModal').style.display = 'flex';
+}
+
+function closeAddModal() {
+    document.getElementById('addModal').style.display = 'none';
+    currentAddItem = null;
+    modalUploadedFiles = {};
+    modalAiResult = null;
+}
+
+async function handleModalFile(proofType) {
+    const fileInput = document.getElementById('modal-file-' + proofType);
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    const statusEl = document.getElementById('modal-status-' + proofType);
+    statusEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+
+    const formData = new FormData();
+    formData.append('files', file);
+    formData.append('proof_type', proofType);
+
+    try {
+        const resp = await fetch('/api/upload', { method: 'POST', body: formData });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error);
+        modalUploadedFiles[proofType] = data.files[0];
+        statusEl.innerHTML = `<span style="color:var(--success);"><i class="fas fa-check"></i> ${escHtml(data.files[0].original_filename)}</span>`;
+        updateModalSubmitState();
+    } catch (err) {
+        statusEl.innerHTML = `<span style="color:var(--danger);">失败</span>`;
+        showToast('上传失败');
+    }
+}
+
+function updateModalSubmitState() {
+    const btn = document.getElementById('btnModalSubmit');
+    const hasFiles = Object.values(modalUploadedFiles).some(f => f !== null);
+    btn.disabled = !hasFiles;
+}
+
+// ============ AI Analysis ============
+async function runModalAiAnalysis() {
+    const uploadedIds = Object.values(modalUploadedFiles).filter(Boolean).map(f => f.id);
+    if (uploadedIds.length === 0) { showToast('请先上传证明文件'); return; }
+
+    const btn = document.getElementById('btnModalAnalyze');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> AI分析中...';
+
+    try {
+        const resp = await fetch('/api/analyze', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                uploaded_file_ids: uploadedIds,
+                keyword: currentAddItem.title,
+            })
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || '分析失败');
+
+        // Find matching confidence for the current item
+        let maxConf = 0;
+        let aiReason = '未找到匹配';
+        data.results.forEach(r => {
+            r.matches.forEach(m => {
+                if (m.id === currentAddItem.id && m.confidence > maxConf) {
+                    maxConf = m.confidence;
+                    aiReason = m.reason || '';
+                }
+            });
+        });
+
+        // If no direct match, use average of top matches
+        if (maxConf === 0) {
+            let allConfs = [];
+            data.results.forEach(r => r.matches.forEach(m => { if (m.confidence > 0) allConfs.push(m.confidence); }));
+            if (allConfs.length > 0) maxConf = Math.round(allConfs.reduce((a,b)=>a+b,0) / allConfs.length);
+        }
+
+        // Check completeness
+        const respP = await fetch(`/api/catalog/${currentAddItem.id}/proofs`);
+        const proofData = await respP.json();
+        const requiredTypes = proofData.required_proofs.map(p => p.type);
+        const uploadedTypes = Object.entries(modalUploadedFiles).filter(([_,v]) => v !== null).map(([k]) => k);
+        const missingTypes = requiredTypes.filter(t => !uploadedTypes.includes(t));
+        const proofsComplete = missingTypes.length === 0;
+
+        // Adjust confidence based on completeness
+        if (!proofsComplete) {
+            maxConf = Math.min(maxConf, 50);
+            aiReason += ' [材料不完整]';
+        }
+
+        const decision = maxConf >= 80 ? 'high' : (maxConf >= 40 ? 'medium' : 'low');
+        const confColor = maxConf >= 80 ? 'var(--success)' : (maxConf >= 40 ? 'var(--accent-amber)' : 'var(--danger)');
+        const decisionLabel = decision === 'high' ? '建议自动通过' : (decision === 'medium' ? '建议人工审核' : '证据不足');
+        const decisionBg = decision === 'high' ? 'var(--success-light)' : (decision === 'medium' ? 'var(--accent-amber-light)' : '#fef2f2');
+
+        modalAiResult = { confidence: maxConf, decision, reason: aiReason, proofsComplete, missingTypes };
+
+        const resultDiv = document.getElementById('modalAiResult');
+        resultDiv.innerHTML = `
+            <div style="padding:14px;border-radius:10px;background:${decisionBg};">
+                <div class="flex-between" style="margin-bottom:8px;">
+                    <strong style="font-size:13px;"><i class="fas fa-robot"></i> AI审核结果</strong>
+                    <span style="font-size:12px;color:${confColor};font-weight:700;">${decisionLabel}</span>
+                </div>
+                <div class="confidence-row">
+                    <div class="confidence-label">置信率</div>
+                    <div class="confidence-bar-wrap">
+                        <div class="confidence-bar ${maxConf>=80?'conf-high':(maxConf>=40?'conf-medium':'conf-low')}" style="width:${maxConf}%;"></div>
+                    </div>
+                    <span class="confidence-value ${maxConf>=80?'conf-high':(maxConf>=40?'conf-medium':'conf-low')}">${maxConf}%</span>
+                </div>
+                <p style="font-size:11px;color:var(--text-muted);margin-top:6px;">${escHtml(aiReason)}</p>
+                ${!proofsComplete ? `<p style="font-size:11px;color:var(--danger);margin-top:4px;"><i class="fas fa-exclamation-triangle"></i> 缺失证明材料：${missingTypes.join(', ')}</p>` : ''}
+                ${proofsComplete ? `<p style="font-size:11px;color:var(--success);margin-top:4px;"><i class="fas fa-check-circle"></i> 材料齐全</p>` : ''}
+            </div>
+        `;
+
+        document.getElementById('btnModalSubmit').disabled = false;
+    } catch (err) {
+        showToast('AI分析失败: ' + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-robot"></i> AI分析材料';
+    }
+}
+
+// ============ Submit ============
+async function submitModalItem() {
+    if (!currentAddItem) return;
+    const uploadedIds = Object.values(modalUploadedFiles).filter(Boolean).map(f => f.id);
+    if (uploadedIds.length === 0) { showToast('请上传证明文件'); return; }
+
+    const conf = modalAiResult ? modalAiResult.confidence : 30;
+    const decision = modalAiResult ? modalAiResult.decision : 'medium';
+    const reason = modalAiResult ? modalAiResult.reason : '未进行AI分析';
+    const completionDate = document.getElementById('modalCompleteDate').value;
+
+    const btn = document.getElementById('btnModalSubmit');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 提交中...';
+
+    try {
+        const resp = await fetch('/api/submissions', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                catalog_item_id: currentAddItem.id,
+                uploaded_file_ids: uploadedIds,
+                completion_date: completionDate,
+                ai_confidence: conf,
+                ai_decision: decision,
+                ai_reason: reason,
+            })
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || '提交失败');
+
+        mySubmittedIds.add(currentAddItem.id);
+
+        if (data.status === 'auto_approved') {
+            showToast('AI审核通过！置信率' + conf + '%，已自动加入你的星轨');
+        } else if (!data.proofs_complete) {
+            showToast('材料不完整，已提交等待管理员审核');
+        } else {
+            showToast('已提交审核，置信率' + conf + '%，请等待管理员审批');
+        }
+
+        closeAddModal();
+        renderCatalog(allItems);
+    } catch (err) {
+        showToast('提交失败: ' + err.message);
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-paper-plane"></i> 提交审核';
+    }
+}
+
+function debounce(fn, ms) { let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); }; }
+function escHtml(s) { const d = document.createElement('div'); d.textContent = s||''; return d.innerHTML; }
+function showToast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 3000); }
+
+init();
+</script>
+{% endblock %}
