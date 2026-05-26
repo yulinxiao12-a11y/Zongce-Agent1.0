@@ -44,7 +44,7 @@ async function postJson(path: string, body: unknown) {
   })
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) {
-    throw new Error(payload.error || payload.message || `HTTP ${response.status}`)
+    throw new Error(payload.error || payload.message || payload.detail || `HTTP ${response.status}`)
   }
   return payload
 }

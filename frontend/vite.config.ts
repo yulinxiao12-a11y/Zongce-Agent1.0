@@ -10,8 +10,16 @@ export default defineConfig(() => {
     server: {
       port: 5173,
       proxy: {
-        '/api': backendUrl,
-        '/uploads': backendUrl,
+        '/api': {
+          target: backendUrl,
+          changeOrigin: true,
+          secure: false,
+        },
+        '/uploads': {
+          target: backendUrl,
+          changeOrigin: true,
+          secure: false,
+        },
       },
     },
   }
