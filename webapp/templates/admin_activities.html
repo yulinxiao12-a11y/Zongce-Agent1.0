@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}活动管理 - 综测星轨{% endblock %}
+{% block content %}
+<div class="page">
+    <div class="page-header flex-between" style="padding:24px 0 8px;margin-bottom:20px;">
+        <div><h1 style="font-size:28px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:10px;"><i class="fas fa-calendar-alt" style="color:var(--primary);"></i> 近期活动管理</h1><p style="color:var(--text-muted);margin-top:4px;font-size:14px;">发布和管理近期活动 · 学生可在机会大厅查看</p></div>
+        <button class="btn btn-primary" onclick="openAddActivity()"><i class="fas fa-plus"></i> 发布活动</button>
+    </div>
+
+    <div class="card"><div class="card-body" style="padding:0;"><div class="table-wrap"><table class="admin-table">
+        <thead><tr><th>ID</th><th>标题</th><th>级别</th><th>分类</th><th>日期</th><th>状态</th><th>关联加分</th><th>操作</th></tr></thead>
+        <tbody id="activitiesBody"><tr><td colspan="8"><div class="spinner"></div></td></tr></tbody>
+    </table></div></div></div>
+</div>
+
+<div class="modal-overlay" id="actModal" style="display:none;">
+    <div class="modal-box" style="max-width:600px;" id="actModalContent"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const STATUS_LABELS = {'报名中':'badge-academic','进行中':'status-auto_approved','即将开始':'status-pending','已结束':'status-rejected'};
+
+async function loadActivities() {
+    const resp = await fetch('/api/admin/activities');
+    const data = await resp.json();
+    const acts = data.activities;
+    if (!acts.length) {
+        document.getElementById('activitiesBody').innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-muted);">暂无活动</td></tr>';
+        return;
+    }
+    document.getElementById('activitiesBody').innerHTML = acts.map(a => `
+        <tr>
+            <td><code>${escHtml(a.id)}</code></td>
+            <td><strong>${escHtml(a.title)}</strong></td>
+            <td><span class="badge badge-college">${escHtml(a.level)}</span></td>
+            <td>${escHtml(a.category)}</td>
+            <td>${escHtml(a.date)}</td>
+            <td><span class="badge ${STATUS_LABELS[a.status]||'badge-college'}">${escHtml(a.status)}</span></td>
+            <td style="font-size:12px;">${escHtml(a.related_score)}</td>
+            <td><div class="action-btns">
+                <button class="btn btn-outline btn-sm" onclick="editActivity('${a.id}')"><i class="fas fa-edit"></i></button>
+                <button class="btn btn-outline btn-sm" onclick="deleteActivity('${a.id}')" style="color:var(--danger);"><i class="fas fa-trash"></i></button>
+            </div></td>
+        </tr>`).join('');
+}
+
+function openAddActivity() {
+    document.getElementById('actModalContent').innerHTML = `
+        <h3>发布新活动</h3>
+        <div style="background:var(--primary-light);border-radius:8px;padding:10px;margin-bottom:12px;">
+            <div style="display:flex;gap:8px;"><input type="text" id="aiName" placeholder="输入活动名称，AI自动填充..." style="flex:1;padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;"><button class="btn btn-sm btn-primary" onclick="aiFill()"><i class="fas fa-magic"></i> AI填充</button></div>
+            <div id="aiResult" style="font-size:11px;color:var(--primary);margin-top:4px;display:none;"></div>
+        </div>
+        <div class="form-group"><label>活动标题</label><input type="text" id="actTitle" required></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div class="form-group"><label>级别</label><select id="actLevel"><option>院级</option><option>校级</option><option>省级</option><option>国家级</option></select></div>
+            <div class="form-group"><label>分类</label><select id="actCat"><option>院级活动</option><option>学科竞赛</option><option>社会实践</option><option>文体活动</option><option>学术讲座</option></select></div>
+            <div class="form-group"><label>日期</label><input type="date" id="actDate"></div>
+            <div class="form-group"><label>状态</label><select id="actStatus"><option>即将开始</option><option>报名中</option><option>进行中</option><option>已结束</option></select></div>
+        </div>
+        <div class="form-group"><label>主办单位</label><input type="text" id="actOrganizer"></div>
+        <div class="form-group"><label>活动描述</label><textarea id="actDesc" style="width:100%;min-height:60px;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;"></textarea></div>
+        <div class="form-group"><label>关联综测加分</label><input type="text" id="actScore" placeholder="如：品德+1-3分"></div>
+        <div class="modal-actions"><button class="btn btn-outline btn-sm" onclick="closeModal()">取消</button><button class="btn btn-primary btn-sm" onclick="saveActivity()"><i class="fas fa-save"></i> 发布</button></div>`;
+    document.getElementById('actModal').style.display = 'flex';
+}
+
+function editActivity(actId) {
+    fetch('/api/admin/activities').then(r=>r.json()).then(data => {
+        const a = data.activities.find(x => x.id === actId);
+        if (!a) return;
+        document.getElementById('actModalContent').innerHTML = `
+            <h3>编辑活动</h3>
+            <div class="form-group"><label>活动标题</label><input type="text" id="actTitle" value="${escHtml(a.title)}" required></div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <div class="form-group"><label>级别</label><select id="actLevel">${['院级','校级','省级','国家级'].map(l=>`<option ${a.level===l?'selected':''}>${l}</option>`).join('')}</select></div>
+                <div class="form-group"><label>分类</label><select id="actCat">${['院级活动','学科竞赛','社会实践','文体活动','学术讲座'].map(c=>`<option ${a.category===c?'selected':''}>${c}</option>`).join('')}</select></div>
+                <div class="form-group"><label>日期</label><input type="date" id="actDate" value="${a.date}"></div>
+                <div class="form-group"><label>状态</label><select id="actStatus">${['即将开始','报名中','进行中','已结束'].map(s=>`<option ${a.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
+            </div>
+            <div class="form-group"><label>主办单位</label><input type="text" id="actOrganizer" value="${escHtml(a.organizer||'')}"></div>
+            <div class="form-group"><label>活动描述</label><textarea id="actDesc" style="width:100%;min-height:60px;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;">${escHtml(a.description||'')}</textarea></div>
+            <div class="form-group"><label>关联综测加分</label><input type="text" id="actScore" value="${escHtml(a.related_score||'')}"></div>
+            <div class="modal-actions"><button class="btn btn-outline btn-sm" onclick="closeModal()">取消</button><button class="btn btn-primary btn-sm" onclick="updateActivity('${actId}')"><i class="fas fa-save"></i> 保存</button></div>`;
+        document.getElementById('actModal').style.display = 'flex';
+    });
+}
+
+async function aiFill() {
+    const name = document.getElementById('aiName').value.trim();
+    if (!name) return;
+    const res = document.getElementById('aiResult'); res.style.display = 'block'; res.textContent = 'AI分析中...';
+    try {
+        const resp = await fetch('/api/admin/activities/ai-fill', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+        const data = await resp.json();
+        if (data.category) document.getElementById('actCat').value = data.category === 'academic' ? '学科竞赛' : data.category === 'moral' ? '社会实践' : '文体活动';
+        if (data.level) document.getElementById('actLevel').value = data.level;
+        if (data.section) document.getElementById('actOrganizer').value = data.section;
+        if (data.suggested_score) document.getElementById('actScore').value = '学业+' + data.suggested_score + '分';
+        res.innerHTML = '<i class="fas fa-check-circle" style="color:var(--success);"></i> AI已填充: ' + (data.reason||'基于规则匹配');
+    } catch(e) { res.textContent = 'AI填充失败'; }
+}
+
+async function saveActivity() {
+    const payload = { title:$('actTitle').value, level:$('actLevel').value, category:$('actCat').value, date:$('actDate').value, status:$('actStatus').value, organizer:$('actOrganizer').value, description:$('actDesc').value, related_score:$('actScore').value };
+    await fetch('/api/admin/activities', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    closeModal(); loadActivities(); showToast('活动已发布');
+}
+
+async function updateActivity(id) {
+    const payload = { title:$('actTitle').value, level:$('actLevel').value, category:$('actCat').value, date:$('actDate').value, status:$('actStatus').value, organizer:$('actOrganizer').value, description:$('actDesc').value, related_score:$('actScore').value };
+    await fetch('/api/admin/activities/' + id, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    closeModal(); loadActivities(); showToast('活动已更新');
+}
+
+async function deleteActivity(id) { if(!confirm('确定删除此活动吗？'))return; await fetch('/api/admin/activities/'+id,{method:'DELETE'}); loadActivities(); showToast('已删除'); }
+function closeModal() { document.getElementById('actModal').style.display = 'none'; }
+function $(id) { return document.getElementById(id); }
+function escHtml(s) { const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
+function showToast(msg) { const t=document.createElement('div'); t.className='toast'; t.textContent=msg; document.body.appendChild(t); setTimeout(()=>t.remove(),2500); }
+
+document.getElementById('actModal').addEventListener('click', function(e) { if(e.target===this) closeModal(); });
+loadActivities();
+</script>
+{% endblock %}

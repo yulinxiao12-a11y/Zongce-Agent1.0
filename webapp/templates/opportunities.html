@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% block title %}机会大厅 - 综测星轨{% endblock %}
+{% block content %}
+<div class="page">
+    <div class="page-header" style="padding:24px 0 8px;margin-bottom:20px;">
+        <h1 style="font-size:28px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:10px;"><i class="fas fa-rocket" style="color:var(--primary);"></i> 机会大厅</h1>
+        <p style="color:var(--text-muted);margin-top:4px;font-size:14px;">学科竞赛目录 + 近期活动通知 · 把握每一个加分机会</p>
+    </div>
+
+    <div class="login-tabs" style="margin-bottom:20px;">
+        <div class="login-tab active" onclick="switchTab('competitions')">学科竞赛</div>
+        <div class="login-tab" onclick="switchTab('activities')">近期活动</div>
+    </div>
+
+    <div id="tab-competitions">
+        <div class="stats-grid" style="grid-template-columns: repeat(4, 1fr);margin-bottom:16px;">
+            <div class="stat-card stat-accent-academic"><div class="stat-icon academic"><i class="fas fa-flag"></i></div><div class="stat-info"><h3>国家级A类</h3><div class="value" id="countNational">--</div><div class="sub">最高级别竞赛</div></div></div>
+            <div class="stat-card stat-accent-sports"><div class="stat-icon sports"><i class="fas fa-medal"></i></div><div class="stat-info"><h3>省级A类</h3><div class="value" id="countProvincial">--</div><div class="sub">省级重点竞赛</div></div></div>
+            <div class="stat-card stat-accent-teal"><div class="stat-icon teal"><i class="fas fa-list"></i></div><div class="stat-info"><h3>总计比赛</h3><div class="value" id="countAll">--</div><div class="sub">学科竞赛总数</div></div></div>
+            <div class="stat-card stat-accent-moral"><div class="stat-icon moral"><i class="fas fa-calendar-check"></i></div><div class="stat-info"><h3>我的备赛</h3><div class="value" id="countMyPlan">--</div><div class="sub">已加入备赛计划</div></div></div>
+        </div>
+        <div class="card"><div class="card-body"><div class="filter-bar">
+            <select id="compFilterLevel" onchange="renderCompetitions()"><option value="">全部级别</option><option value="国家级">国家级A类</option><option value="省级">省级A类</option></select>
+            <input type="text" id="compFilterKeyword" placeholder="搜索比赛名称..." oninput="renderCompetitions()">
+            <span class="text-muted" style="font-size:14px;" id="compResultCount"></span>
+        </div></div></div>
+        <div id="compGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:16px;"></div>
+    </div>
+
+    <!-- ====== 近期活动 ====== -->
+    <div id="tab-activities" style="display:none;">
+        <div class="card"><div class="card-body"><div class="filter-bar">
+            <input type="text" id="actFilterKeyword" placeholder="搜索活动..." oninput="renderActivities()">
+            <span class="text-muted" style="font-size:14px;" id="actResultCount"></span>
+        </div></div></div>
+        <div id="actGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:16px;"></div>
+    </div>
+</div>
+
+<!-- Detail Modal -->
+<div class="modal-overlay" id="detailModal" style="display:none;">
+    <div class="modal-box" style="max-width:600px;" id="detailModalContent"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let allComps = [];
+let allActivities = [];
+let myCompPlans = JSON.parse(localStorage.getItem('zongce_comp_plans') || '[]');
+let myActPlans = JSON.parse(localStorage.getItem('zongce_act_plans') || '[]');
+
+function escHtml(s) { const d = document.createElement('div'); d.textContent = s||''; return d.innerHTML; }
+function showToast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2500); }
+
+async function init() {
+    const [compResp, actResp] = await Promise.all([
+        fetch('/api/competitions'),
+        fetch('/api/activities')
+    ]);
+    allComps = (await compResp.json()).competitions;
+    allActivities = (await actResp.json()).activities;
+
+    document.getElementById('countNational').textContent = allComps.filter(c => c.mapped_level==='国家级').length;
+    document.getElementById('countProvincial').textContent = allComps.filter(c => c.mapped_level==='省级').length;
+    document.getElementById('countAll').textContent = allComps.length;
+    document.getElementById('countMyPlan').textContent = myCompPlans.length;
+
+    renderCompetitions();
+    renderActivities();
+    document.getElementById('detailModal').addEventListener('click', function(e) { if (e.target === this) closeDetailModal(); });
+}
+
+function switchTab(tab) {
+    document.querySelectorAll('.login-tab').forEach(t => t.classList.remove('active'));
+    event.target.classList.add('active');
+    document.getElementById('tab-competitions').style.display = tab === 'competitions' ? 'block' : 'none';
+    document.getElementById('tab-activities').style.display = tab === 'activities' ? 'block' : 'none';
+}
+
+// ====== 学科竞赛 ======
+function renderCompetitions() {
+    const lvl = document.getElementById('compFilterLevel').value;
+    const kw = document.getElementById('compFilterKeyword').value.toLowerCase();
+    let items = allComps;
+    if (lvl) items = items.filter(c => c.mapped_level === lvl);
+    if (kw) items = items.filter(c => c.name.toLowerCase().includes(kw) || (c.organizer||'').toLowerCase().includes(kw));
+    document.getElementById('compResultCount').textContent = '共 ' + items.length + ' 项';
+
+    const lvlBadges = {'国家级':'badge-national','省级':'badge-provincial'};
+    document.getElementById('compGrid').innerHTML = items.map(c => {
+        const inPlan = myCompPlans.includes(c.id);
+        return `<div class="catalog-item ${inPlan?'selected':''}">
+            <div class="catalog-item-top"><span class="catalog-icon"><i class="fas fa-trophy"></i></span><div class="catalog-badges"><span class="badge ${lvlBadges[c.mapped_level]||'badge-college'}">${escHtml(c.level)}</span>${c.website?'<span class="badge badge-academic"><i class="fas fa-globe"></i> 官网</span>':''}</div></div>
+            <h4 class="catalog-title">${escHtml(c.name)}</h4>
+            <p class="catalog-desc">${c.organizer?'主办: '+escHtml(c.organizer.substring(0,60)):''}</p>
+            <div class="catalog-footer"><span></span><span class="catalog-section">${escHtml(c.level)}</span></div>
+            <div style="margin-top:10px;display:flex;gap:6px;justify-content:flex-end;">
+                <button class="btn btn-outline btn-sm" onclick="viewCompDetail('${c.id}')"><i class="fas fa-info-circle"></i> 详情</button>
+                <button class="btn btn-sm ${inPlan?'btn-outline':'btn-primary'}" onclick="toggleCompPlan('${c.id}')" style="${inPlan?'color:var(--primary-dark);border-color:var(--primary);':''}"><i class="fas ${inPlan?'fa-check':'fa-calendar-plus'}"></i> ${inPlan?'已加入备赛':'加入备赛'}</button>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function viewCompDetail(compId) {
+    const c = allComps.find(x => x.id === compId);
+    if (!c) return;
+    document.getElementById('detailModalContent').innerHTML = `
+        <h3>${escHtml(c.name)}</h3><div style="margin:10px 0;"><span class="badge badge-national">${escHtml(c.level)}</span></div>
+        <div style="margin:8px 0;font-size:13px;line-height:1.6;">
+            <p><strong>主办单位：</strong>${escHtml(c.organizer||'暂无')}</p>
+            ${c.website?`<p><strong>官网：</strong><a href="${escHtml(c.website)}" target="_blank" style="color:var(--primary);">${escHtml(c.website)}</a></p>`:''}
+        </div>
+        <div style="margin-top:12px;padding:12px;background:var(--primary-light);border-radius:8px;"><p style="font-size:12px;color:var(--primary);"><i class="fas fa-lightbulb"></i> 备赛获奖后可申请综测加分（国家级A类最高+40分）</p></div>
+        <div class="modal-actions"><button class="btn btn-outline btn-sm" onclick="closeDetailModal()">关闭</button></div>`;
+    document.getElementById('detailModal').style.display = 'flex';
+}
+
+function toggleCompPlan(compId) {
+    const idx = myCompPlans.indexOf(compId);
+    if (idx >= 0) { myCompPlans.splice(idx, 1); } else { myCompPlans.push(compId); }
+    localStorage.setItem('zongce_comp_plans', JSON.stringify(myCompPlans));
+    document.getElementById('countMyPlan').textContent = myCompPlans.length;
+    renderCompetitions();
+}
+
+// ====== 近期活动 ======
+function renderActivities() {
+    const kw = document.getElementById('actFilterKeyword').value.toLowerCase();
+    let items = allActivities;
+    if (kw) items = items.filter(a => a.title.toLowerCase().includes(kw) || (a.description||'').toLowerCase().includes(kw));
+    document.getElementById('actResultCount').textContent = '共 ' + items.length + ' 项';
+
+    const statusColors = {'报名中':'var(--success)','进行中':'var(--accent-blue)','即将开始':'var(--accent-amber)','已结束':'var(--text-light)'};
+    const statusBgs = {'报名中':'#d1fae5','进行中':'#e3edf7','即将开始':'#fef3c7','已结束':'#f1f5f9'};
+    const lvlBadges = {'国家级':'badge-national','省级':'badge-provincial','校级':'badge-school','院级':'badge-college'};
+
+    document.getElementById('actGrid').innerHTML = items.map(a => {
+        const inPlan = myActPlans.includes(a.id);
+        return `<div class="catalog-item ${inPlan?'selected':''}">
+            <div class="catalog-item-top"><span class="catalog-icon"><i class="fas fa-calendar-star"></i></span><div class="catalog-badges"><span class="badge ${lvlBadges[a.level]||'badge-college'}">${escHtml(a.level)}</span><span class="badge" style="background:${statusBgs[a.status]||'#f1f5f9'};color:${statusColors[a.status]||'#999'};">${escHtml(a.status)}</span></div></div>
+            <h4 class="catalog-title">${escHtml(a.title)}</h4>
+            <p class="catalog-desc">${escHtml(a.description||'').substring(0,80)}</p>
+            <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;"><i class="fas fa-calendar"></i> ${escHtml(a.date)} | ${escHtml(a.organizer||'')}</div>
+            <div class="catalog-footer"><span class="catalog-score" style="font-size:13px;">${escHtml(a.related_score||'')}</span><span class="catalog-section">${escHtml(a.category||'')}</span></div>
+            <div style="margin-top:10px;display:flex;gap:6px;justify-content:flex-end;">
+                <button class="btn btn-outline btn-sm" onclick="viewActDetail('${a.id}')"><i class="fas fa-info-circle"></i> 详情</button>
+                <button class="btn btn-sm ${inPlan?'btn-success':'btn-primary'}" onclick="toggleActPlan('${a.id}')"><i class="fas ${inPlan?'fa-check':'fa-calendar-plus'}"></i> ${inPlan?'已加入计划':'加入计划'}</button>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function viewActDetail(actId) {
+    const a = allActivities.find(x => x.id === actId);
+    if (!a) return;
+    document.getElementById('detailModalContent').innerHTML = `
+        <h3>${escHtml(a.title)}</h3>
+        <div style="margin:10px 0;"><span class="badge badge-national">${escHtml(a.level)}</span> <span class="badge badge-academic">${escHtml(a.status)}</span> <span class="badge badge-score">${escHtml(a.related_score||'')}</span></div>
+        <div style="margin:8px 0;font-size:13px;line-height:1.6;">
+            <p><strong>时间：</strong>${escHtml(a.date)}</p>
+            <p><strong>主办：</strong>${escHtml(a.organizer||'暂无')}</p>
+            <p><strong>分类：</strong>${escHtml(a.category||'')}</p>
+            <p><strong>描述：</strong>${escHtml(a.description||'暂无描述')}</p>
+        </div>
+        <div style="margin-top:12px;padding:12px;background:var(--primary-light);border-radius:8px;"><p style="font-size:12px;color:var(--primary);"><i class="fas fa-lightbulb"></i> 参加此活动可获得综测加分，详情请查看活动通知</p></div>
+        <div class="modal-actions"><button class="btn btn-outline btn-sm" onclick="closeDetailModal()">关闭</button></div>`;
+    document.getElementById('detailModal').style.display = 'flex';
+}
+
+function toggleActPlan(actId) {
+    const idx = myActPlans.indexOf(actId);
+    if (idx >= 0) { myActPlans.splice(idx, 1); } else { myActPlans.push(actId); }
+    localStorage.setItem('zongce_act_plans', JSON.stringify(myActPlans));
+    renderActivities();
+}
+
+function closeDetailModal() { document.getElementById('detailModal').style.display = 'none'; }
+
+init();
+</script>
+{% endblock %}

@@ -1,0 +1,309 @@
+{% extends "base.html" %}
+{% block title %}细则管理 - 综测星轨{% endblock %}
+{% block content %}
+<div class="page">
+    <div class="page-header flex-between" style="padding:24px 0 8px;margin-bottom:20px;">
+        <div>
+            <h1 style="font-size:28px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:10px;"><i class="fas fa-file-contract" style="color:var(--primary);"></i> 综测细则管理</h1>
+            <p style="color:var(--text-muted);margin-top:4px;font-size:14px;">上传最新综测细则 · AI智能提取加分项目 · 一键更新目录</p>
+        </div>
+        <div style="display:flex;gap:8px;">
+            <button class="btn btn-outline btn-sm" onclick="viewCurrentRegulation()"><i class="fas fa-eye"></i> 查看现行细则</button>
+            <button class="btn btn-primary btn-sm" onclick="openUploadModal()"><i class="fas fa-cloud-upload-alt"></i> 上传细则文件</button>
+        </div>
+    </div>
+
+    <!-- 文件列表 -->
+    <div class="card">
+        <div class="card-header"><h2><i class="fas fa-history"></i> 上传记录</h2></div>
+        <div class="card-body" style="padding:0;">
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>标题</th><th>文件名</th><th>类型</th><th>提取项目数</th><th>状态</th><th>上传时间</th><th>操作</th></tr></thead>
+                    <tbody id="regTableBody">
+                        <tr><td colspan="7" style="text-align:center;padding:30px;"><div class="spinner"></div></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 上传弹窗 -->
+<div class="modal-overlay" id="uploadModal" style="display:none;">
+    <div class="modal-box" style="max-width:500px;">
+        <h3>上传综测细则</h3>
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">支持 PDF / DOCX / TXT / 图片格式。上传后 AI 将自动提取文字并识别加分项目。</p>
+        <form id="uploadForm" onsubmit="uploadRegulation(event)">
+            <div class="form-group">
+                <label>细则标题</label>
+                <input type="text" id="regTitle" placeholder="如：2025年7月电信学院综测细则">
+            </div>
+            <div class="form-group">
+                <label>选择文件</label>
+                <div class="upload-zone" id="regUploadZone" style="padding:30px;cursor:pointer;" onclick="document.getElementById('regFileInput').click()">
+                    <div class="upload-icon"><i class="fas fa-file-pdf"></i></div>
+                    <p style="margin-top:8px;">点击选择细则文件</p>
+                    <p style="font-size:11px;color:var(--text-light);">PDF / DOCX / TXT / JPG / PNG</p>
+                </div>
+                <input type="file" id="regFileInput" accept=".pdf,.docx,.doc,.txt,.jpg,.jpeg,.png" style="display:none;" onchange="onFileSelected(this)">
+                <div id="selectedFileInfo" style="font-size:12px;color:var(--primary);margin-top:8px;display:none;"></div>
+            </div>
+            <div class="form-group" id="uploadProgressGroup" style="display:none;">
+                <div class="progress-bar-wrap"><div class="progress-bar-fill" id="uploadProgressBar"></div></div>
+                <p style="font-size:12px;color:var(--text-muted);text-align:center;margin-top:6px;" id="uploadProgressText"></p>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-outline btn-sm" onclick="closeUploadModal()">取消</button>
+                <button type="submit" class="btn btn-primary btn-sm" id="btnUploadSubmit"><i class="fas fa-upload"></i> 上传并提取</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 提取结果弹窗 -->
+<div class="modal-overlay" id="extractModal" style="display:none;">
+    <div class="modal-box" style="max-width:700px;max-height:85vh;overflow-y:auto;">
+        <div id="extractModalContent"></div>
+    </div>
+</div>
+
+<!-- 查看细则弹窗 -->
+<div class="modal-overlay" id="viewRegulationModal" style="display:none;">
+    <div class="modal-box" style="max-width:700px;max-height:85vh;overflow-y:auto;">
+        <div id="viewRegulationContent"></div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let selectedFile = null;
+
+function escHtml(s) { const d = document.createElement('div'); d.textContent = s||''; return d.innerHTML; }
+function showToast(msg) { const t = document.createElement('div'); t.className='toast'; t.textContent=msg; document.body.appendChild(t); setTimeout(()=>t.remove(),2500); }
+
+function openUploadModal() {
+    document.getElementById('uploadModal').style.display = 'flex';
+    document.getElementById('regTitle').value = '';
+    document.getElementById('regFileInput').value = '';
+    document.getElementById('selectedFileInfo').style.display = 'none';
+    document.getElementById('uploadProgressGroup').style.display = 'none';
+    document.getElementById('btnUploadSubmit').disabled = false;
+    selectedFile = null;
+}
+
+function closeUploadModal() {
+    document.getElementById('uploadModal').style.display = 'none';
+}
+
+function onFileSelected(input) {
+    if (input.files.length > 0) {
+        selectedFile = input.files[0];
+        document.getElementById('selectedFileInfo').style.display = 'block';
+        document.getElementById('selectedFileInfo').innerHTML = '<i class="fas fa-file"></i> ' + escHtml(selectedFile.name) + ' (' + (selectedFile.size/1024).toFixed(1) + ' KB)';
+    }
+}
+
+async function uploadRegulation(e) {
+    e.preventDefault();
+    if (!selectedFile) { showToast('请选择文件'); return; }
+
+    const btn = document.getElementById('btnUploadSubmit');
+    btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 上传中...';
+    document.getElementById('uploadProgressGroup').style.display = 'block';
+    document.getElementById('uploadProgressBar').style.width = '30%';
+    document.getElementById('uploadProgressText').textContent = '正在上传...';
+
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+    formData.append('title', document.getElementById('regTitle').value.trim());
+
+    try {
+        const resp = await fetch('/api/admin/regulations', { method: 'POST', body: formData });
+        document.getElementById('uploadProgressBar').style.width = '80%';
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || '上传失败');
+
+        document.getElementById('uploadProgressBar').style.width = '100%';
+        document.getElementById('uploadProgressText').textContent = '上传成功，正在 AI 提取...';
+
+        // 自动触发 AI 提取
+        const extractResp = await fetch('/api/admin/regulations/' + data.id + '/extract', { method: 'POST' });
+        const extractData = await extractResp.json();
+
+        if (extractResp.ok && extractData.items && extractData.items.length > 0) {
+            closeUploadModal();
+            showExtractResults(data.id, extractData);
+        } else {
+            closeUploadModal();
+            showToast('文件已上传，但未识别到项目。可手动查看。');
+        }
+        loadRegulations();
+    } catch (err) {
+        document.getElementById('uploadProgressBar').style.width = '0%';
+        document.getElementById('uploadProgressText').textContent = '上传失败: ' + err.message;
+        btn.disabled = false; btn.innerHTML = '<i class="fas fa-redo"></i> 重试上传';
+        showToast(err.message);
+    }
+}
+
+function showExtractResults(docId, data) {
+    const container = document.getElementById('extractModalContent');
+    container.innerHTML = `
+        <h3><i class="fas fa-robot"></i> AI 提取结果</h3>
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">
+            从细则文件中识别到 <strong>${data.total}</strong> 个加分项目。勾选需要加入目录的项目，点击"应用到目录"。
+        </p>
+        <div style="max-height:50vh;overflow-y:auto;margin-bottom:16px;" id="extractItemsList">
+            ${data.items.map((it, i) => `
+                <div style="display:flex;align-items:flex-start;gap:12px;padding:12px;margin:6px 0;background:var(--surface-alt);border-radius:8px;border:1px solid var(--border);">
+                    <input type="checkbox" id="chk-${i}" checked style="margin-top:3px;transform:scale(1.2);">
+                    <div style="flex:1;min-width:0;">
+                        <strong style="font-size:13px;">${escHtml(it.title)}</strong>
+                        <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;">
+                            <span class="badge ${it.category==='moral'?'badge-moral':(it.category==='academic'?'badge-academic':'badge-sports')}">${it.category==='moral'?'品德':(it.category==='academic'?'学业':'文体')}</span>
+                            <span class="badge badge-college">${escHtml(it.level||'校级')}</span>
+                            <span class="badge badge-score">+${it.score||0}分</span>
+                            <span class="badge" style="background:var(--warning-light);color:var(--accent-amber-dark);">AI置信 ${it.confidence||0}%</span>
+                        </div>
+                        <p style="font-size:11px;color:var(--text-muted);margin-top:4px;">${escHtml(it.description||it.source_text||'')}</p>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-outline btn-sm" onclick="document.getElementById('extractModal').style.display='none'">取消</button>
+            <button class="btn btn-primary btn-sm" onclick="applyExtractedItems(${docId}, ${JSON.stringify(data.items).replace(/"/g, '&quot;')})" id="btnApply"><i class="fas fa-check-circle"></i> 应用到目录</button>
+        </div>`;
+    document.getElementById('extractModal').style.display = 'flex';
+}
+
+async function applyExtractedItems(docId, allItems) {
+    const selected = [];
+    document.querySelectorAll('#extractItemsList input[type=checkbox]').forEach((chk, i) => {
+        if (chk.checked && allItems[i]) selected.push(allItems[i]);
+    });
+    if (selected.length === 0) { showToast('请至少勾选一项'); return; }
+
+    const btn = document.getElementById('btnApply');
+    btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 应用...';
+
+    try {
+        const resp = await fetch('/api/admin/regulations/' + docId + '/apply', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({items: selected})
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || '应用失败');
+        document.getElementById('extractModal').style.display = 'none';
+        showToast('成功添加 ' + data.added + ' 个项目到综测目录');
+        loadRegulations();
+    } catch (err) {
+        showToast(err.message);
+        btn.disabled = false; btn.innerHTML = '<i class="fas fa-check-circle"></i> 应用到目录';
+    }
+}
+
+async function loadRegulations() {
+    try {
+        const resp = await fetch('/api/admin/regulations');
+        const data = await resp.json();
+        const docs = data.regulations;
+        if (docs.length === 0) {
+            document.getElementById('regTableBody').innerHTML =
+                '<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-muted);">暂无上传记录，点击右上角上传细则文件</td></tr>';
+            return;
+        }
+        document.getElementById('regTableBody').innerHTML = docs.map(d => `
+            <tr>
+                <td><strong>${escHtml(d.title)}</strong> ${d.is_current ? '<span class="badge badge-academic">现行</span>' : ''}</td>
+                <td style="font-size:12px;"><i class="fas fa-file-alt"></i> ${escHtml(d.original_filename)}</td>
+                <td><span class="badge badge-college">${d.file_type.toUpperCase()}</span></td>
+                <td>${d.extracted_items_count}</td>
+                <td>${d.is_current ? '<span style="color:var(--success);font-weight:600;">现行生效</span>' : '<span style="color:var(--text-light);">历史版本</span>'}</td>
+                <td style="font-size:12px;">${d.uploaded_at}</td>
+                <td>
+                    <div class="action-btns">
+                        <button class="btn btn-outline btn-sm" onclick="viewRegulationDetail(${d.id})"><i class="fas fa-eye"></i></button>
+                        <button class="btn btn-outline btn-sm" onclick="reExtract(${d.id})" title="重新AI提取"><i class="fas fa-robot"></i></button>
+                        <button class="btn btn-outline btn-sm" onclick="deleteRegulation(${d.id})" style="color:var(--danger);"><i class="fas fa-trash"></i></button>
+                    </div>
+                </td>
+            </tr>
+        `).join('');
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+async function viewRegulationDetail(docId) {
+    try {
+        const resp = await fetch('/api/admin/regulations/' + docId);
+        const d = await resp.json();
+        const items = d.extracted_items || [];
+        document.getElementById('viewRegulationContent').innerHTML = `
+            <h3><i class="fas fa-file-contract"></i> ${escHtml(d.title)}</h3>
+            <p style="font-size:13px;color:var(--text-muted);">${escHtml(d.original_filename)} | ${d.uploaded_at}</p>
+            <div style="margin:12px 0;display:flex;gap:8px;">
+                <a href="/api/admin/regulations/${docId}/file" target="_blank" class="btn btn-outline btn-sm"><i class="fas fa-download"></i> 下载原文件</a>
+                ${items.length > 0 ? `<button class="btn btn-primary btn-sm" onclick="showExtractResults(${docId}, {items:${JSON.stringify(items).replace(/"/g,'&quot;')},total:${items.length}})"><i class="fas fa-list-check"></i> 查看提取项目 (${items.length}项)</button>` : ''}
+            </div>
+            ${d.extracted_text ? `
+            <div style="margin-top:12px;">
+                <h4 style="font-size:13px;font-weight:600;margin-bottom:8px;">提取的文字内容</h4>
+                <div style="padding:12px;background:var(--surface-alt);border-radius:8px;font-size:12px;line-height:1.6;max-height:300px;overflow-y:auto;white-space:pre-wrap;">${escHtml(d.extracted_text.substring(0,3000))}${d.extracted_text.length>3000?'...':''}</div>
+            </div>` : '<p style="color:var(--text-muted);margin-top:12px;">未能从文件中提取文字</p>'}
+            <div class="modal-actions"><button class="btn btn-outline btn-sm" onclick="document.getElementById('viewRegulationModal').style.display='none'">关闭</button></div>`;
+        document.getElementById('viewRegulationModal').style.display = 'flex';
+    } catch (err) {
+        showToast('加载失败');
+    }
+}
+
+async function reExtract(docId) {
+    showToast('正在重新提取...');
+    try {
+        const resp = await fetch('/api/admin/regulations/' + docId + '/extract', { method: 'POST' });
+        const data = await resp.json();
+        if (resp.ok && data.items && data.items.length > 0) {
+            showExtractResults(docId, data);
+        } else {
+            showToast('未识别到项目');
+        }
+        loadRegulations();
+    } catch (err) {
+        showToast('提取失败: ' + err.message);
+    }
+}
+
+async function deleteRegulation(docId) {
+    if (!confirm('确定删除此细则文件吗？')) return;
+    try {
+        await fetch('/api/admin/regulations/' + docId, { method: 'DELETE' });
+        showToast('已删除');
+        loadRegulations();
+    } catch (err) {
+        showToast('删除失败');
+    }
+}
+
+async function viewCurrentRegulation() {
+    try {
+        const resp = await fetch('/api/admin/regulations/current');
+        if (!resp.ok) { showToast('暂无现行细则文件'); return; }
+        const d = await resp.json();
+        window.open('/api/admin/regulations/' + d.id + '/file', '_blank');
+    } catch (err) {
+        showToast('查看失败');
+    }
+}
+
+// Close modals on overlay click
+document.getElementById('uploadModal').addEventListener('click', function(e) { if (e.target===this) closeUploadModal(); });
+document.getElementById('extractModal').addEventListener('click', function(e) { if (e.target===this) this.style.display='none'; });
+document.getElementById('viewRegulationModal').addEventListener('click', function(e) { if (e.target===this) this.style.display='none'; });
+
+loadRegulations();
+</script>
+{% endblock %}

@@ -1,0 +1,329 @@
+{% extends "base.html" %}
+{% block title %}用户管理 - 综测星轨{% endblock %}
+{% block content %}
+<div class="page">
+    <div class="page-header flex-between" style="padding:24px 0 8px;margin-bottom:20px;">
+        <div>
+            <h1 style="font-size:28px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:10px;"><i class="fas fa-users" style="color:var(--primary);"></i> 星轨用户管理</h1>
+            <p style="color:var(--text-muted);margin-top:4px;font-size:14px;">管理学生账号 · 添加/编辑/禁用用户</p>
+        </div>
+        <button class="btn btn-primary" onclick="openAddUser()"><i class="fas fa-plus"></i> 添加用户</button>
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <div class="filter-bar">
+                <input type="text" id="searchKeyword" placeholder="搜索学号、姓名或院系..." oninput="debounceSearch()">
+                <span class="text-muted" style="font-size:13px;" id="userCount"></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-body" style="padding:0;">
+            <div class="table-wrap">
+                <table class="admin-table">
+                    <thead>
+                        <tr><th>ID</th><th>学号</th><th>姓名</th><th>院系</th><th>班级</th><th>综测项目数</th><th>提交数</th><th>注册时间</th><th>操作</th></tr>
+                    </thead>
+                    <tbody id="usersTableBody">
+                        <tr><td colspan="9"><div class="spinner"></div></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit User Modal -->
+<div class="modal-overlay" id="userModal" style="display:none;">
+    <div class="modal-box">
+        <h3 id="userModalTitle">添加用户</h3>
+        <form id="userForm" onsubmit="submitUser(event)">
+            <input type="hidden" id="editUserId">
+            <div class="form-group">
+                <label>学号</label>
+                <input type="text" id="editStudentId" placeholder="请输入学号" required>
+            </div>
+            <div class="form-group">
+                <label>姓名</label>
+                <input type="text" id="editName" placeholder="请输入姓名" required>
+            </div>
+            <div class="form-group" id="passwordGroup">
+                <label>密码</label>
+                <input type="text" id="editPassword" value="000000" placeholder="至少6位">
+                <div class="input-hint">默认密码 000000</div>
+            </div>
+            <div class="form-group">
+                <label>院系</label>
+                <input type="text" id="editDepartment" value="电子与信息学院">
+            </div>
+            <div class="form-group">
+                <label>班级</label>
+                <input type="text" id="editClassName" placeholder="如：通信2101班">
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-outline btn-sm" onclick="closeUserModal()">取消</button>
+                <button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-save"></i> 保存</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Reset Password Modal -->
+<div class="modal-overlay" id="passwordModal" style="display:none;">
+    <div class="modal-box">
+        <h3>重置密码</h3>
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px;" id="resetPwdInfo"></p>
+        <div class="form-group">
+            <label>新密码</label>
+            <input type="text" id="newPassword" placeholder="至少6位" value="000000">
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-outline btn-sm" onclick="closePasswordModal()">取消</button>
+            <button class="btn btn-primary btn-sm" onclick="resetPassword()"><i class="fas fa-key"></i> 确认重置</button>
+        </div>
+    </div>
+</div>
+
+<!-- 查看用户综测项目弹窗 -->
+<div class="modal-overlay" id="itemsModal" style="display:none;">
+    <div class="modal-box" style="max-width:700px;max-height:80vh;overflow-y:auto;">
+        <h3 id="itemsModalTitle">用户综测项目</h3>
+        <div id="itemsModalBody"></div>
+        <div class="modal-actions"><button class="btn btn-outline btn-sm" onclick="document.getElementById('itemsModal').style.display='none'">关闭</button></div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let searchTimer = null;
+
+function debounceSearch() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(loadUsers, 300);
+}
+
+async function loadUsers() {
+    const keyword = document.getElementById('searchKeyword').value.trim();
+    const resp = await fetch(`/api/admin/users?keyword=${encodeURIComponent(keyword)}`);
+    const data = await resp.json();
+
+    document.getElementById('userCount').textContent = `共 ${data.users.length} 人`;
+
+    if (data.users.length === 0) {
+        document.getElementById('usersTableBody').innerHTML =
+            '<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--text-muted);">暂无用户</td></tr>';
+        return;
+    }
+
+    document.getElementById('usersTableBody').innerHTML = data.users.map(u => `
+        <tr>
+            <td>#${u.id}</td>
+            <td><strong>${escHtml(u.student_id)}</strong></td>
+            <td>${escHtml(u.name)}</td>
+            <td>${escHtml(u.department)}</td>
+            <td>${escHtml(u.class_name)}</td>
+            <td>${u.item_count}</td>
+            <td>${u.submission_count}</td>
+            <td style="font-size:12px;">${u.created_at}</td>
+            <td>
+                <div class="action-btns">
+                    <button class="btn btn-outline btn-sm" onclick="viewUserItems(${u.id}, '${escJs(u.name)}', '${escJs(u.student_id)}')" title="查看综测"><i class="fas fa-star"></i></button>
+                    <button class="btn btn-outline btn-sm" onclick="openEditUser(${u.id}, '${escJs(u.student_id)}', '${escJs(u.name)}', '${escJs(u.department)}', '${escJs(u.class_name)}')"><i class="fas fa-edit"></i></button>
+                    <button class="btn btn-outline btn-sm" onclick="openResetPassword(${u.id}, '${escJs(u.name)}')"><i class="fas fa-key"></i></button>
+                    <button class="btn btn-outline btn-sm" onclick="deleteUser(${u.id}, '${escJs(u.name)}')" style="color:var(--danger);"><i class="fas fa-ban"></i></button>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function openAddUser() {
+    document.getElementById('userModalTitle').textContent = '添加用户';
+    document.getElementById('editUserId').value = '';
+    document.getElementById('editStudentId').value = '';
+    document.getElementById('editName').value = '';
+    document.getElementById('editPassword').value = '000000';
+    document.getElementById('editDepartment').value = '电子与信息学院';
+    document.getElementById('editClassName').value = '';
+    document.getElementById('passwordGroup').style.display = 'block';
+    document.getElementById('userModal').style.display = 'flex';
+}
+
+function openEditUser(id, studentId, name, dept, className) {
+    document.getElementById('userModalTitle').textContent = '编辑用户';
+    document.getElementById('editUserId').value = id;
+    document.getElementById('editStudentId').value = studentId;
+    document.getElementById('editStudentId').disabled = true;
+    document.getElementById('editName').value = name;
+    document.getElementById('editDepartment').value = dept;
+    document.getElementById('editClassName').value = className;
+    document.getElementById('passwordGroup').style.display = 'none';
+    document.getElementById('userModal').style.display = 'flex';
+}
+
+function closeUserModal() {
+    document.getElementById('userModal').style.display = 'none';
+    document.getElementById('editStudentId').disabled = false;
+}
+
+async function submitUser(e) {
+    e.preventDefault();
+    const id = document.getElementById('editUserId').value;
+
+    try {
+        if (id) {
+            // Edit existing
+            const resp = await fetch(`/api/admin/users/${id}`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    name: document.getElementById('editName').value.trim(),
+                    department: document.getElementById('editDepartment').value.trim(),
+                    class_name: document.getElementById('editClassName').value.trim(),
+                })
+            });
+            if (!resp.ok) { const d = await resp.json(); throw new Error(d.error); }
+        } else {
+            // Add new
+            const resp = await fetch('/api/admin/users', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    student_id: document.getElementById('editStudentId').value.trim(),
+                    name: document.getElementById('editName').value.trim(),
+                    password: document.getElementById('editPassword').value.trim(),
+                    department: document.getElementById('editDepartment').value.trim(),
+                    class_name: document.getElementById('editClassName').value.trim(),
+                })
+            });
+            if (!resp.ok) { const d = await resp.json(); throw new Error(d.error); }
+        }
+
+        closeUserModal();
+        document.getElementById('editStudentId').disabled = false;
+        showToast(id ? '用户已更新' : '用户已创建');
+        loadUsers();
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+async function deleteUser(id, name) {
+    if (!confirm(`确定禁用用户「${name}」吗？`)) return;
+    try {
+        const resp = await fetch(`/api/admin/users/${id}`, {method: 'DELETE'});
+        if (!resp.ok) throw new Error('操作失败');
+        showToast(`已禁用用户「${name}」`);
+        loadUsers();
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+let resetUserId = null;
+
+function openResetPassword(id, name) {
+    resetUserId = id;
+    document.getElementById('resetPwdInfo').textContent = `为用户「${name}」(ID: ${id}) 重置密码`;
+    document.getElementById('newPassword').value = '000000';
+    document.getElementById('passwordModal').style.display = 'flex';
+}
+
+function closePasswordModal() {
+    document.getElementById('passwordModal').style.display = 'none';
+    resetUserId = null;
+}
+
+async function resetPassword() {
+    const password = document.getElementById('newPassword').value.trim();
+    if (password.length < 6) { alert('密码至少6位'); return; }
+    try {
+        const resp = await fetch(`/api/admin/users/${resetUserId}/reset-password`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({password})
+        });
+        if (!resp.ok) { const d = await resp.json(); throw new Error(d.error); }
+        closePasswordModal();
+        showToast('密码已重置');
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+function showToast(msg) {
+    const t = document.createElement('div');
+    t.className = 'toast'; t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 2500);
+}
+
+function escHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s || '';
+    return d.innerHTML;
+}
+
+function escJs(s) {
+    return (s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
+}
+
+// Close modals on overlay click
+document.getElementById('userModal').addEventListener('click', function(e) {
+    if (e.target === this) { closeUserModal(); document.getElementById('editStudentId').disabled = false; }
+});
+document.getElementById('passwordModal').addEventListener('click', function(e) {
+    if (e.target === this) closePasswordModal();
+});
+document.getElementById('itemsModal').addEventListener('click', function(e) {
+    if (e.target === this) this.style.display = 'none';
+});
+
+async function adminDeleteUserItem(itemId, uid, title) {
+    if (!confirm(`确定删除「${title}」吗？此操作同步到学生端，不可恢复。`)) return;
+    try {
+        const resp = await fetch(`/api/user-items/${itemId}`, {method:'DELETE'});
+        if (!resp.ok) throw new Error('删除失败');
+        showToast('已删除，学生端同步更新');
+        // 刷新列表
+        viewUserItems(uid, '', '');
+    } catch(err) { showToast(err.message); }
+}
+
+async function viewUserItems(uid, name, sid) {
+    document.getElementById('itemsModalTitle').textContent = `综测项目 — ${escHtml(name)} (${escHtml(sid)})`;
+    document.getElementById('itemsModalBody').innerHTML = '<div class="spinner"></div>';
+    document.getElementById('itemsModal').style.display = 'flex';
+    try {
+        const resp = await fetch(`/api/admin/users/${uid}/items`);
+        const data = await resp.json();
+        if (data.items.length === 0) {
+            document.getElementById('itemsModalBody').innerHTML = '<p style="text-align:center;padding:30px;color:var(--text-muted);">该用户暂无综测项目</p>';
+        } else {
+            const catBadges = {moral:'badge-moral', academic:'badge-academic', sports:'badge-sports'};
+            const lvlBadges = {'国家级':'badge-national','省级':'badge-provincial','校级':'badge-school','院级':'badge-college','班级':'badge-college'};
+            document.getElementById('itemsModalBody').innerHTML = `
+                <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">共 ${data.total} 项 | 总分: ${data.items.reduce((s,i)=>s+(i.score||0),0)}</p>
+                <table><thead><tr><th>项目名称</th><th>大类</th><th>级别</th><th>得分</th><th>来源</th><th>完成日期</th><th>操作</th></tr></thead>
+                <tbody>${data.items.map(i => `
+                    <tr id="admin-item-row-${i.id}">
+                        <td><strong>${escHtml(i.title)}</strong></td>
+                        <td><span class="badge ${catBadges[i.category]||'badge-moral'}">${escHtml(i.category_name||'')}</span></td>
+                        <td><span class="badge ${lvlBadges[i.level]||'badge-college'}">${escHtml(i.level||'-')}</span></td>
+                        <td><strong style="color:var(--primary);">+${i.score}</strong></td>
+                        <td style="font-size:12px;">${i.source==='upload'?'上传审核':(i.source==='manual'?'手动添加':'管理员添加')}</td>
+                        <td style="font-size:12px;">${i.completion_date||'-'}</td>
+                        <td><button class="btn btn-outline btn-sm" onclick="adminDeleteUserItem(${i.id},${uid},'${escJs(i.title)}')" style="color:var(--danger);font-size:11px;"><i class="fas fa-trash"></i></button></td>
+                    </tr>
+                `).join('')}</tbody></table>`;
+        }
+    } catch(err) {
+        document.getElementById('itemsModalBody').innerHTML = '<p style="color:var(--danger);text-align:center;padding:20px;">加载失败</p>';
+    }
+}
+
+loadUsers();
+</script>
+{% endblock %}

@@ -19,6 +19,8 @@ venv/
 # Local databases and uploads
 *.db
 backend/uploads/
+webapp/instance/
+webapp/uploads/
 
 # Editor and OS files
 .vscode/
