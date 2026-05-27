@@ -11,79 +11,54 @@
 <body>
     <!-- ═══ 左侧边栏 ═══ -->
     <aside class="sidebar">
-        <a href="{{ '/' if current_user.role != 'admin' or session.get('view_as_student') else '/admin' }}" class="sidebar-brand">
-            <span class="brand-icon-wrap">
-                <i class="fas fa-star"></i>
-                <i class="fas fa-circle-notch brand-orbit"></i>
-            </span>
-            <span class="brand-text">综测<span class="brand-accent">星轨</span></span>
+        <a href="{{ '/' if current_user.role != 'admin' or session.get('view_as_student') else '/admin' }}" class="brand">
+            <span class="brand-mark">Z</span>
+            <div>
+                <strong>综测星轨</strong>
+                <small>Zongce Agent</small>
+            </div>
         </a>
 
-        <nav class="sidebar-nav">
+        {% if current_user.role == 'admin' %}
+        <div class="role-switch">
+            <a href="/back-to-admin" class="{{ '' if session.get('view_as_student') else 'active' }}">管理端</a>
+            <a href="/view-as-student" class="{{ 'active' if session.get('view_as_student') else '' }}">学生端</a>
+        </div>
+        {% endif %}
+
+        <nav class="nav-list">
             {% if current_user.role == 'admin' and not session.get('view_as_student') %}
-            <div class="sidebar-section-label">管理功能</div>
             <a href="/admin/submissions" id="nav-admin-submissions">
-                <i class="fas fa-clipboard-check"></i> 审核队列
+                <span class="nav-dot"></span> 审核队列
             </a>
             <a href="/admin/users" id="nav-admin-users">
-                <i class="fas fa-users"></i> 用户管理
+                <span class="nav-dot"></span> 用户管理
             </a>
             <a href="/admin/items" id="nav-admin-items">
-                <i class="fas fa-list-alt"></i> 项目管理
+                <span class="nav-dot"></span> 项目管理
             </a>
             <a href="/admin/activities" id="nav-admin-activities">
-                <i class="fas fa-calendar-alt"></i> 活动管理
+                <span class="nav-dot"></span> 活动管理
             </a>
             <a href="/admin/regulations" id="nav-admin-regulations">
-                <i class="fas fa-file-contract"></i> 细则管理
-            </a>
-            <div class="sidebar-sep"></div>
-            <a href="/view-as-student" class="sidebar-link-accent">
-                <i class="fas fa-user-graduate"></i> 切换到学生端
-            </a>
-            <a href="/logout" class="sidebar-link-danger">
-                <i class="fas fa-sign-out-alt"></i> 退出登录
+                <span class="nav-dot"></span> 细则管理
             </a>
             {% elif current_user.role == 'admin' and session.get('view_as_student') %}
-            <div class="sidebar-section-label">学生功能（管理员视角）</div>
-            <a href="/" id="nav-hall"><i class="fas fa-star"></i> 星轨探索</a>
-            <a href="/opportunities" id="nav-opportunities"><i class="fas fa-rocket"></i> 机会大厅</a>
-            <a href="/upload" id="nav-upload"><i class="fas fa-cloud-upload-alt"></i> 材料提交</a>
-            <a href="/personal" id="nav-personal"><i class="fas fa-user-astronaut"></i> 我的星轨</a>
-            <div class="sidebar-sep"></div>
-            <a href="/back-to-admin" class="sidebar-link-accent">
-                <i class="fas fa-arrow-left"></i> 返回管理端
-            </a>
-            <a href="/logout" class="sidebar-link-muted">
-                <i class="fas fa-sign-out-alt"></i> 退出
-            </a>
+            <a href="/" id="nav-hall"><span class="nav-dot"></span> 星轨探索</a>
+            <a href="/opportunities" id="nav-opportunities"><span class="nav-dot"></span> 机会大厅</a>
+            <a href="/upload" id="nav-upload"><span class="nav-dot"></span> 材料提交</a>
+            <a href="/personal" id="nav-personal"><span class="nav-dot"></span> 我的星轨</a>
             {% else %}
-            <div class="sidebar-section-label">功能导航</div>
-            <a href="/" id="nav-hall"><i class="fas fa-star"></i> 星轨探索</a>
-            <a href="/opportunities" id="nav-opportunities"><i class="fas fa-rocket"></i> 机会大厅</a>
-            <a href="/upload" id="nav-upload"><i class="fas fa-cloud-upload-alt"></i> 材料提交</a>
-            <a href="/personal" id="nav-personal"><i class="fas fa-user-astronaut"></i> 我的星轨</a>
-            <div class="sidebar-sep"></div>
-            <a href="/logout" class="sidebar-link-muted">
-                <i class="fas fa-sign-out-alt"></i> 退出
-            </a>
+            <a href="/" id="nav-hall"><span class="nav-dot"></span> 星轨探索</a>
+            <a href="/opportunities" id="nav-opportunities"><span class="nav-dot"></span> 机会大厅</a>
+            <a href="/upload" id="nav-upload"><span class="nav-dot"></span> 材料提交</a>
+            <a href="/personal" id="nav-personal"><span class="nav-dot"></span> 我的星轨</a>
             {% endif %}
         </nav>
 
-        <div class="sidebar-user">
-            <div class="sidebar-avatar">
-                <span>{{ current_user.name[0] if current_user.name else '?' }}</span>
-            </div>
-            <div class="sidebar-user-info">
-                <div class="sidebar-user-name">{{ current_user.name }}</div>
-                <div class="sidebar-user-role">
-                    {% if current_user.role == 'admin' %}
-                    系统管理员
-                    {% else %}
-                    {{ current_user.student_id }}
-                    {% endif %}
-                </div>
-            </div>
+        <div class="sidebar-footer">
+            <span>当前细则</span>
+            <strong>2025年7月电信学院综测细则（公示版）</strong>
         </div>
     </aside>
 
@@ -98,7 +73,7 @@
     // Active sidebar nav
     (function(){
         const path = location.pathname;
-        document.querySelectorAll('.sidebar-nav a').forEach(a => {
+        document.querySelectorAll('.nav-list a').forEach(a => {
             const href = a.getAttribute('href');
             if (href === path || (href !== '/' && path.startsWith(href))) {
                 a.classList.add('active');

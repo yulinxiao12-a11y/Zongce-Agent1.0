@@ -887,7 +887,7 @@ body {
   flex-direction: column;
   align-items: stretch;
   gap: 4px;
-  padding: 6px 12px;
+  padding: 18px 12px 6px;
   overflow: auto;
 }
 
@@ -1185,15 +1185,15 @@ body {
 
 .catalog-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 22px;
 }
 
 .catalog-explorer-card {
   display: flex;
   flex-direction: column;
-  min-height: 250px;
-  padding: 20px;
+  min-height: 318px;
+  padding: 26px;
   border: 1px solid #dbe4ef;
   border-radius: 14px;
   background: #ffffff;
@@ -1209,7 +1209,7 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 18px;
+  margin-bottom: 20px;
 }
 
 .catalog-icon-box {
@@ -1248,17 +1248,18 @@ body {
 .catalog-badge.college { color: #9b6507; background: #fff4ce; }
 
 .catalog-explorer-card h3 {
-  margin: 0 0 8px;
+  min-height: 46px;
+  margin: 0 0 10px;
   color: #061a33;
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.45;
 }
 
 .catalog-explorer-card p {
-  min-height: 42px;
-  margin: 0 0 16px;
+  min-height: 54px;
+  margin: 0 0 22px;
   color: #52677f;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.55;
 }
 
@@ -1286,7 +1287,7 @@ body {
   display: flex;
   justify-content: flex-end;
   min-height: 32px;
-  margin-top: 12px;
+  margin-top: 18px;
 }
 
 .catalog-submitted {
@@ -3110,6 +3111,38 @@ body {
   color: rgba(255, 255, 255, 0.72);
 }
 
+.honor-file-list {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.honor-file-list span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 6px 10px;
+  border-radius: 8px;
+  color: #dbeafe;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.honor-file-list button {
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 50%;
+  color: #ffffff;
+  background: rgba(15, 23, 42, 0.32);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
 .honor-add-panel .el-button {
   grid-column: 1 / -1;
 }
@@ -3766,6 +3799,10 @@ body {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .catalog-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .activity-card-rich {
     grid-template-columns: 180px minmax(0, 1fr);
   }
@@ -3837,6 +3874,7 @@ body {
   .dashboard-kpi-row,
   .dashboard-main-grid,
   .material-drop-grid,
+  .catalog-grid,
   .dashboard-filters {
     grid-template-columns: 1fr;
   }

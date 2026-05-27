@@ -246,6 +246,7 @@ const targetAiVerifyResult = ref('')
 
 const honorForm = reactive({ title: '', category: '证书', image_url: '' })
 const honorDropOver = ref(false)
+const honorSelectedFiles = ref<File[]>([])
 const honorEditorVisible = ref(false)
 const honorEditForm = reactive({ id: 0, title: '', category: '证书', image_url: '', visibility: 'private' })
 const publishForm = reactive({
@@ -420,13 +421,6 @@ function switchTab(tab: string) {
     activeAdminTab.value = tab
     if (tab === '用户管理' && canViewAdmin.value) loadAdminUsers()
   }
-}
-
-function switchRole(role: 'student' | 'admin') {
-  if (role === 'admin' && !canViewAdmin.value) return
-  store.switchRole(role)
-  router.push(role === 'admin' ? '/admin' : '/student')
-  nextTick(renderCharts)
 }
 
 async function logout() {
@@ -1110,6 +1104,10 @@ async function createHonor() {
     ElMessage.warning('请填写荣誉标题')
     return
   }
+  if (honorSelectedFiles.value.length) {
+    await addHonorFiles(honorSelectedFiles.value)
+    return
+  }
   await postJson('/honor-wall', { user_id: store.studentId, ...honorForm })
   honorForm.title = ''
   honorForm.image_url = ''
@@ -1119,11 +1117,11 @@ async function createHonor() {
 async function addHonorFiles(files: File[]) {
   const images = files.filter(file => file.type.startsWith('image/'))
   if (!images.length) return
-  for (const file of images) {
+  for (const [index, file] of images.entries()) {
     const result = await uploadSingleFile(file)
     await postJson('/honor-wall', {
       user_id: store.studentId,
-      title: honorForm.title.trim() || cleanFileTitle(file.name),
+      title: images.length === 1 ? honorForm.title.trim() || cleanFileTitle(file.name) : `${honorForm.title.trim() || cleanFileTitle(file.name)} ${index + 1}`,
       category: honorForm.category,
       image_url: result.url,
       visibility: 'private',
@@ -1137,14 +1135,25 @@ async function addHonorFiles(files: File[]) {
 
 async function handleHonorFileSelect(event: Event) {
   const input = event.target as HTMLInputElement
-  await addHonorFiles(Array.from(input.files || []))
+  const files = Array.from(input.files || []).filter(file => file.type.startsWith('image/'))
+  if (!files.length) {
+    ElMessage.warning('荣誉星墙只支持图片文件')
+  } else {
+    honorSelectedFiles.value = files
+  }
   input.value = ''
 }
 
 async function onHonorPageDrop(event: DragEvent) {
   event.preventDefault()
   honorDropOver.value = false
-  await addHonorFiles(Array.from(event.dataTransfer?.files || []))
+  const files = Array.from(event.dataTransfer?.files || []).filter(file => file.type.startsWith('image/'))
+  if (!files.length) return
+  honorSelectedFiles.value = files
+}
+
+function removeSelectedHonorFile(index: number) {
+  honorSelectedFiles.value.splice(index, 1)
 }
 
 function openHonorEditor(item: HonorItem) {
@@ -1161,6 +1170,7 @@ function openHonorEditor(item: HonorItem) {
 async function saveHonorEdit() {
   if (!honorEditForm.id) return
   await patchJson(`/honor-wall/${honorEditForm.id}`, {
+    user_id: store.studentId,
     title: honorEditForm.title,
     category: honorEditForm.category,
     image_url: honorEditForm.image_url,
@@ -1168,6 +1178,17 @@ async function saveHonorEdit() {
   })
   honorEditorVisible.value = false
   ElMessage.success('荣誉信息已更新')
+  await loadAll()
+}
+
+async function deleteHonor() {
+  if (!honorEditForm.id) return
+  await api(`/honor-wall/${honorEditForm.id}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ user_id: store.studentId }),
+  })
+  honorEditorVisible.value = false
+  ElMessage.success('已移除荣誉展示')
   await loadAll()
 }
 
@@ -1186,8 +1207,8 @@ async function dropHonor(target: HonorItem) {
   if (!from) return
   const fromOrder = from.sort_order
   await Promise.all([
-    patchJson(`/honor-wall/${from.id}`, { sort_order: target.sort_order }),
-    patchJson(`/honor-wall/${target.id}`, { sort_order: fromOrder }),
+    patchJson(`/honor-wall/${from.id}`, { user_id: store.studentId, sort_order: target.sort_order }),
+    patchJson(`/honor-wall/${target.id}`, { user_id: store.studentId, sort_order: fromOrder }),
   ])
   draggedHonorId.value = null
   await loadAll()
@@ -1498,11 +1519,6 @@ onMounted(loadAll)
           <strong>综测星轨</strong>
           <small>Zongce Agent</small>
         </div>
-      </div>
-
-      <div class="role-switch">
-        <button v-if="canViewAdmin" :class="{ active: store.roleMode === 'admin' }" @click="switchRole('admin')">管理端</button>
-        <button :class="{ active: store.roleMode === 'student' }" @click="switchRole('student')">学生端</button>
       </div>
 
       <nav class="nav-list">
@@ -1980,10 +1996,18 @@ onMounted(loadAll)
               </el-select>
               <label class="honor-upload-zone" @dragover.prevent @drop.prevent="onHonorPageDrop">
                 <input type="file" multiple accept=".jpg,.jpeg,.png,.webp" @change="handleHonorFileSelect" />
-                <strong>点击或拖拽图片添加</strong>
-                <span>上传后会立即出现在荣誉墙中</span>
+                <strong>点击或拖拽选择图片</strong>
+                <span>填写标题和分类后一起添加到荣誉墙</span>
               </label>
-              <el-button type="primary" @click="createHonor">添加文字荣誉</el-button>
+              <div v-if="honorSelectedFiles.length" class="honor-file-list">
+                <span v-for="(file, index) in honorSelectedFiles" :key="`${file.name}-${index}`">
+                  {{ file.name }}
+                  <button type="button" @click.stop="removeSelectedHonorFile(index)">×</button>
+                </span>
+              </div>
+              <el-button type="primary" @click="createHonor">
+                {{ honorSelectedFiles.length ? '添加图文荣誉' : '添加文字荣誉' }}
+              </el-button>
             </div>
           </div>
           <div class="honor-wall">
@@ -2607,6 +2631,7 @@ onMounted(loadAll)
         </label>
       </div>
       <template #footer>
+        <el-button type="danger" plain @click="deleteHonor">移除</el-button>
         <el-button @click="honorEditorVisible = false">取消</el-button>
         <el-button type="primary" @click="saveHonorEdit">保存</el-button>
       </template>

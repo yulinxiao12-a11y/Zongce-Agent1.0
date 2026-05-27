@@ -23,6 +23,7 @@ from models import db, User, CatalogItem, UserItem, Submission, UploadedFile, Re
 from ai_engine import analyze_files, ai_suggest_item_fields
 from competitions_data import COMPETITIONS
 from activities_data import load_activities, add_activity, update_activity, delete_activity
+from honor_data import load_honors, add_honor, update_honor, delete_honor
 
 # ============================================================
 # App Factory
@@ -62,6 +63,17 @@ def handle_unauthorized():
     if request.path.startswith('/api/'):
         return jsonify({'error': 'Not authenticated'}), 401
     return redirect(url_for('auth_login'))
+
+
+@app.before_request
+def clear_student_view_for_admin_pages():
+    if (
+        current_user.is_authenticated
+        and current_user.role == 'admin'
+        and request.path.startswith('/admin')
+        and session.get('view_as_student')
+    ):
+        session.pop('view_as_student', None)
 
 
 def admin_required(f):
@@ -361,6 +373,138 @@ def api_activities():
     if keyword:
         activities = [a for a in activities if keyword in a['title'].lower() or keyword in a.get('description','').lower()]
     return jsonify({'activities': activities, 'total': len(activities)})
+
+
+def _activity_dimension(activity):
+    text = ''.join([
+        activity.get('category', ''),
+        activity.get('related_score', ''),
+        activity.get('title', ''),
+    ])
+    if any(key in text for key in ['学业', '学科', '竞赛', '证书', '科研', '论文']):
+        return 'academic', '学业'
+    if any(key in text for key in ['文体', '文化', '体育', '文艺', '主持']):
+        return 'arts_sports', '文体'
+    return 'moral', '德育'
+
+
+def _activity_roi(activity):
+    score_text = activity.get('related_score', '')
+    numbers = [float(item) for item in re.findall(r'\d+(?:\.\d+)?', score_text)]
+    if numbers:
+        return round(max(3.0, min(5.0, max(numbers) / 10)), 1)
+    return 3.8
+
+
+def _activity_to_opportunity(activity):
+    dimension, dimension_label = _activity_dimension(activity)
+    activity_id = activity.get('id') or ''
+    return {
+        'id': activity_id,
+        'source_type': 'notice',
+        'source_label': '近期通知',
+        'title': activity.get('title', ''),
+        'category': activity.get('category', ''),
+        'dimension': dimension,
+        'dimension_label': dimension_label,
+        'organizer': activity.get('organizer', ''),
+        'location': activity.get('location', ''),
+        'start_time': activity.get('date', ''),
+        'deadline': activity.get('date', ''),
+        'season_months': '',
+        'credit_hint': activity.get('related_score', ''),
+        'rule_ref': activity.get('related_score', ''),
+        'official_url': activity.get('official_url', ''),
+        'registration_url': activity.get('registration_url', ''),
+        'contact_email': '',
+        'article_url': '',
+        'group_qr_url': '',
+        'description': activity.get('description', ''),
+        'requirements': ['活动通知', '参与证明或结果证明'],
+        'tags': [item for item in [activity.get('level'), activity.get('status')] if item],
+        'attachments': [],
+        'images': activity.get('images', []),
+        'roi_score': _activity_roi(activity),
+        'in_basket': False,
+        'status': activity.get('status', ''),
+        'activity_id': activity_id,
+    }
+
+
+@app.route('/api/opportunities', methods=['GET', 'POST'])
+@login_required
+def api_opportunities_compat():
+    """Vue 学生端机会大厅兼容接口，近期通知与管理端活动共用一份数据。"""
+    if request.method == 'GET':
+        source_type = request.args.get('source_type', '')
+        category = request.args.get('category', '')
+        dimension = request.args.get('dimension', '')
+        keyword = request.args.get('keyword', '').strip().lower()
+
+        opportunities = [_activity_to_opportunity(item) for item in load_activities()]
+        if source_type:
+            opportunities = [item for item in opportunities if item['source_type'] == source_type]
+        if category:
+            opportunities = [item for item in opportunities if item['category'] == category]
+        if dimension:
+            opportunities = [item for item in opportunities if item['dimension'] == dimension]
+        if keyword:
+            opportunities = [
+                item for item in opportunities
+                if keyword in item['title'].lower() or keyword in item.get('description', '').lower()
+            ]
+        return jsonify(opportunities)
+
+    data = request.get_json(silent=True) or {}
+    if not data.get('title'):
+        return jsonify({'error': '活动标题不能为空'}), 400
+
+    activity = add_activity({
+        'title': data.get('title', ''),
+        'category': data.get('category') or data.get('dimension_label') or '院级活动',
+        'level': data.get('award_level') or data.get('level') or '院级',
+        'date': data.get('deadline') or data.get('start_time') or '',
+        'organizer': data.get('organizer', ''),
+        'description': data.get('description', ''),
+        'status': data.get('status') or '即将开始',
+        'related_score': data.get('credit_hint') or data.get('rule_ref') or '',
+        'images': data.get('images', []),
+        'location': data.get('location', ''),
+        'official_url': data.get('official_url', ''),
+        'registration_url': data.get('registration_url', ''),
+    })
+    return jsonify(_activity_to_opportunity(activity)), 201
+
+
+def _honor_owner_id():
+    return request.args.get('user_id') or (request.get_json(silent=True) or {}).get('user_id') or current_user.id
+
+
+@app.route('/api/honor-wall', methods=['GET', 'POST'])
+@login_required
+def api_honor_wall():
+    if request.method == 'GET':
+        return jsonify(load_honors(_honor_owner_id()))
+
+    data = request.get_json(silent=True) or {}
+    if not data.get('title'):
+        return jsonify({'error': '荣誉标题不能为空'}), 400
+    return jsonify(add_honor(_honor_owner_id(), data)), 201
+
+
+@app.route('/api/honor-wall/<int:honor_id>', methods=['PATCH', 'PUT', 'DELETE'])
+@login_required
+def api_honor_wall_detail(honor_id):
+    if request.method == 'DELETE':
+        if not delete_honor(_honor_owner_id(), honor_id):
+            return jsonify({'error': '荣誉记录不存在'}), 404
+        return jsonify({'success': True})
+
+    data = request.get_json(silent=True) or {}
+    item = update_honor(_honor_owner_id(), honor_id, data)
+    if not item:
+        return jsonify({'error': '荣誉记录不存在'}), 404
+    return jsonify(item)
 
 
 @app.route('/api/admin/activities', methods=['GET', 'POST'])
@@ -998,6 +1142,16 @@ def api_serve_file(filepath):
 
     directory = os.path.join(app.config['UPLOAD_FOLDER'], owner_id)
     filename = '/'.join(parts[1:])
+    return send_from_directory(directory, filename)
+
+
+@app.route('/uploads/<path:filepath>')
+@login_required
+def serve_public_upload(filepath):
+    """Serve demo/public uploaded assets such as honor wall seed images."""
+    safe_path = filepath.replace('\\', '/').lstrip('/')
+    directory = os.path.join(app.config['UPLOAD_FOLDER'], os.path.dirname(safe_path))
+    filename = os.path.basename(safe_path)
     return send_from_directory(directory, filename)
 
 

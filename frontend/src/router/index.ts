@@ -48,6 +48,11 @@ async function fetchCurrentUser(): Promise<CurrentUser | null> {
 }
 
 router.beforeEach(async to => {
+  if (to.path.startsWith('/admin')) {
+    window.location.assign(to.fullPath)
+    return false
+  }
+
   const store = useAppStore()
   const user = await fetchCurrentUser()
   store.setCurrentUser(user)

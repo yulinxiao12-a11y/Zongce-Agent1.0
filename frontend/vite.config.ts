@@ -10,12 +10,37 @@ export default defineConfig(() => {
     server: {
       port: 5173,
       proxy: {
+        '/admin': {
+          target: backendUrl,
+          changeOrigin: true,
+          secure: false,
+        },
         '/api': {
           target: backendUrl,
           changeOrigin: true,
           secure: false,
         },
+        '/static': {
+          target: backendUrl,
+          changeOrigin: true,
+          secure: false,
+        },
         '/uploads': {
+          target: backendUrl,
+          changeOrigin: true,
+          secure: false,
+        },
+        '/view-as-student': {
+          target: backendUrl,
+          changeOrigin: true,
+          secure: false,
+        },
+        '/back-to-admin': {
+          target: backendUrl,
+          changeOrigin: true,
+          secure: false,
+        },
+        '/logout': {
           target: backendUrl,
           changeOrigin: true,
           secure: false,

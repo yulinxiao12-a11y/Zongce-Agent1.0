@@ -42,6 +42,10 @@ def add_activity(data):
         'description': data.get('description', ''),
         'status': data.get('status', '即将开始'),
         'related_score': data.get('related_score', ''),
+        'location': data.get('location', ''),
+        'official_url': data.get('official_url', ''),
+        'registration_url': data.get('registration_url', ''),
+        'images': data.get('images', []),
     }
     activities.append(activity)
     save_activities(activities)
@@ -51,7 +55,7 @@ def update_activity(act_id, data):
     activities = load_activities()
     for a in activities:
         if a['id'] == act_id:
-            for key in ['title','category','level','date','organizer','description','status','related_score']:
+            for key in ['title','category','level','date','organizer','description','status','related_score','location','official_url','registration_url','images']:
                 if key in data:
                     a[key] = data[key]
             save_activities(activities)

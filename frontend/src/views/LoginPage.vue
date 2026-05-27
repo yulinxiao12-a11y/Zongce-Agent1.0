@@ -54,7 +54,11 @@ async function submitLogin() {
     student_id: loginForm.student_id.trim(),
     password: loginForm.password,
   })
-  await router.push(payload.role === 'admin' ? '/admin' : '/student')
+  if (payload.role === 'admin') {
+    window.location.assign('/admin/submissions')
+    return
+  }
+  await router.push('/student')
 }
 
 async function submitRegister() {
