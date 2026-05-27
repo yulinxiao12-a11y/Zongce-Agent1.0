@@ -1190,10 +1190,11 @@ body {
 }
 
 .catalog-explorer-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 300px;
-  padding: 24px;
+  padding: 24px 24px 78px;
   overflow: hidden;
   border: 2px solid #e1e7ef;
   border-radius: 12px;
@@ -1301,10 +1302,14 @@ body {
 }
 
 .catalog-card-actions {
+  position: absolute;
+  right: 24px;
+  bottom: 24px;
   display: flex;
   justify-content: flex-end;
+  align-items: center;
   min-height: 34px;
-  margin-top: 14px;
+  margin-top: 0;
 }
 
 .catalog-card-actions .btn-primary-sm {
