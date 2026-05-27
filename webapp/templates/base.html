@@ -64,6 +64,23 @@
 
     <!-- ═══ 主内容区 ═══ -->
     <main class="main-content">
+        <header class="admin-topbar">
+            <h1 id="adminTopbarTitle">&#31649;&#29702;&#31471;</h1>
+            <div class="topbar-actions">
+                <button class="bell-btn" type="button" aria-label="&#28040;&#24687;">
+                    <span class="bell-dot">1</span>
+                    <span class="bell-mark">&#9679;</span>
+                </button>
+                <div class="login-card" aria-label="&#24403;&#21069;&#36134;&#21495;">
+                    <span class="avatar-circle">{% if current_user.name %}{{ current_user.name[:1] }}{% else %}&#31995;{% endif %}</span>
+                    <span>
+                        <strong>{{ current_user.name or '&#31995;&#32479;&#31649;&#29702;&#21592;' }}</strong>
+                        <small>{% if current_user.role == 'admin' and not session.get('view_as_student') %}&#31649;&#29702;&#21592;{% else %}&#23398;&#29983;&#36134;&#21495;{% endif %}</small>
+                    </span>
+                </div>
+                <a class="logout-btn" href="/logout">&#36864;&#20986;</a>
+            </div>
+        </header>
         {% block content %}{% endblock %}
     </main>
 
@@ -79,6 +96,11 @@
                 a.classList.add('active');
             }
         });
+        const topbarTitle = document.getElementById('adminTopbarTitle');
+        const pageTitle = document.querySelector('.page-header h1');
+        if (topbarTitle && pageTitle) {
+            topbarTitle.textContent = pageTitle.textContent.trim();
+        }
     })();
     </script>
 </body>

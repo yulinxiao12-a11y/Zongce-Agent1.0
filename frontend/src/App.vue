@@ -227,6 +227,7 @@ const brokenOpportunityImages = ref<Set<number>>(new Set())
 
 const filters = reactive({
   dimension: '',
+  category: '',
   keyword: '',
 })
 
@@ -302,9 +303,18 @@ const filteredOpportunities = computed(() => {
   return opportunities.value.filter(item => {
     if (item.source_type !== opportunityMode.value) return false
     if (filters.dimension && item.dimension !== filters.dimension) return false
+    if (filters.category && item.category !== filters.category) return false
     if (filters.keyword && !item.title.includes(filters.keyword.trim())) return false
     return true
   })
+})
+
+const currentOpportunityCategories = computed(() => {
+  const categories = opportunities.value
+    .filter(item => item.source_type === opportunityMode.value)
+    .map(item => item.category)
+    .filter(Boolean)
+  return Array.from(new Set(categories)).slice(0, 5)
 })
 
 const opportunityCounts = computed(() => ({
@@ -456,6 +466,10 @@ watch(
   },
   { immediate: true },
 )
+
+watch(opportunityMode, () => {
+  filters.category = ''
+})
 
 function dimensionDisplayName(dimension: DimensionKey) {
   const map: Record<DimensionKey, string> = {
@@ -655,6 +669,16 @@ function opportunityFallbackTitle(item: Opportunity) {
 
 function markOpportunityImageBroken(item: Opportunity) {
   brokenOpportunityImages.value = new Set([...brokenOpportunityImages.value, item.id])
+}
+
+function applyOpportunityFilters() {
+  filters.keyword = filters.keyword.trim()
+}
+
+function resetOpportunityFilters() {
+  filters.dimension = ''
+  filters.category = ''
+  filters.keyword = ''
 }
 
 function honorImage(item: HonorItem) {
@@ -1762,13 +1786,42 @@ onMounted(loadAll)
             </button>
           </div>
 
-          <div class="toolbar hall-toolbar">
-            <el-input v-model="filters.keyword" placeholder="搜索比赛、活动、证书" clearable />
-            <el-select v-model="filters.dimension" placeholder="综测归属" clearable>
-              <el-option label="德育" value="moral" />
-              <el-option label="学业" value="academic" />
-              <el-option label="文体" value="arts_sports" />
-            </el-select>
+          <div class="hall-filter-panel">
+            <div class="filter-row">
+              <span class="filter-label">综测归属:</span>
+              <div class="filter-options">
+                <button :class="{ active: !filters.dimension }" @click="filters.dimension = ''">全部</button>
+                <button :class="{ active: filters.dimension === 'moral' }" @click="filters.dimension = 'moral'">德育</button>
+                <button :class="{ active: filters.dimension === 'academic' }" @click="filters.dimension = 'academic'">学业</button>
+                <button :class="{ active: filters.dimension === 'arts_sports' }" @click="filters.dimension = 'arts_sports'">文体</button>
+              </div>
+            </div>
+            <div class="filter-row">
+              <span class="filter-label">{{ opportunityMode === 'notice' ? '活动类型:' : '赛事类型:' }}</span>
+              <div class="filter-options">
+                <button :class="{ active: !filters.category }" @click="filters.category = ''">全部</button>
+                <button
+                  v-for="category in currentOpportunityCategories"
+                  :key="category"
+                  :class="{ active: filters.category === category }"
+                  @click="filters.category = category"
+                >
+                  {{ category }}
+                </button>
+              </div>
+            </div>
+            <div class="filter-row filter-search-row">
+              <span class="filter-label">其他条件:</span>
+              <el-input
+                v-model="filters.keyword"
+                class="hall-search-input"
+                placeholder="请输入比赛/活动/证书"
+                clearable
+                @keyup.enter="applyOpportunityFilters"
+              />
+              <button class="filter-action primary" @click="applyOpportunityFilters">查询</button>
+              <button class="filter-action" @click="resetOpportunityFilters">重置</button>
+            </div>
           </div>
 
           <div class="section-header">
