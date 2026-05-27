@@ -298,6 +298,10 @@ const currentTabs = computed(() => (store.roleMode === 'student' ? studentTabs :
 const currentActiveTab = computed(() => (store.roleMode === 'student' ? activeStudentTab.value : activeAdminTab.value))
 const activeRuleDoc = computed(() => ruleDocs.value.find(doc => doc.is_active) || templates.value?.active_rule_document || null)
 const canViewAdmin = computed(() => store.currentUser?.role === 'admin')
+const evergreenMajorLabel = computed(() => {
+  const department = store.currentUser?.department || summary.value?.user.college || '电子信息'
+  return department.replace('学院', '').replace('与', '')
+})
 
 const filteredOpportunities = computed(() => {
   return opportunities.value.filter(item => {
@@ -1825,8 +1829,8 @@ onMounted(loadAll)
           </div>
 
           <div class="section-header">
-            <h2>{{ opportunityMode === 'notice' ? '学院/学校近期通知' : '电子信息方向常驻备赛库' }}</h2>
-            <p>{{ opportunityMode === 'notice' ? '只展示近期由学校或学院发布的活动通知。' : '不等通知也能提前准备的长期赛事。最终能否加分仍以细则和通知审核为准。' }}</p>
+            <h2>{{ opportunityMode === 'notice' ? '学院/学校近期通知' : `${evergreenMajorLabel}方向常驻备赛库` }}</h2>
+            <p>{{ opportunityMode === 'notice' ? '只展示近期由学校或学院发布的活动通知。' : 'AI已根据当前账号专业画像筛选长期赛事；最终能否加分仍以细则和通知审核为准。' }}</p>
           </div>
 
           <div class="activity-grid">

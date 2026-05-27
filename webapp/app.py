@@ -431,6 +431,179 @@ def _activity_to_opportunity(activity):
     }
 
 
+EVERGREEN_COMPETITIONS = [
+    {
+        'id': 'EVG-EI-001',
+        'title': '全国大学生电子设计竞赛',
+        'category': '学科竞赛',
+        'organizer': '教育部高等教育司、工业和信息化部',
+        'season_months': '通常 7-8 月',
+        'description': '面向电子信息类学生的综合硬件设计竞赛，适合提前准备电路、嵌入式、传感器与系统调试能力。',
+        'credit_hint': '学业表现：按竞赛级别、奖项和证明材料审核加分。',
+        'rule_ref': '学业附加分：国家级/省级学科竞赛按综测细则核验。',
+        'official_url': 'http://nuedc.xjtu.edu.cn/',
+        'images': ['/competition-covers/nuedc.png'],
+        'roi_score': 4.8,
+        'keywords': ['电子', '通信', '自动化', '电气', '物联网', '嵌入式', '信息'],
+    },
+    {
+        'id': 'EVG-EI-002',
+        'title': '蓝桥杯全国软件和信息技术专业人才大赛',
+        'category': '程序设计',
+        'organizer': '国信蓝桥教育科技',
+        'season_months': '通常 3-6 月',
+        'description': '覆盖软件、电子、嵌入式等赛道，适合计算机、电子信息、物联网方向学生长期刷题备赛。',
+        'credit_hint': '学业表现：按获奖级别和获奖证书审核。',
+        'rule_ref': '学业附加分：学科竞赛获奖按竞赛目录和奖项等级核验。',
+        'official_url': 'https://dasai.lanqiao.cn/',
+        'images': ['https://assets.lanqiao.cn/lanqiaobei-fe/v8.5.3/dist/favico.png'],
+        'roi_score': 4.4,
+        'keywords': ['软件', '计算机', '电子', '信息', '物联网', '人工智能'],
+    },
+    {
+        'id': 'EVG-EI-003',
+        'title': '中国大学生计算机设计大赛',
+        'category': '软件开发',
+        'organizer': '中国教育电视台等',
+        'season_months': '通常 3-8 月',
+        'description': '以计算机应用设计为核心，适合做 Web、移动应用、数据可视化、AI 应用和数字媒体项目。',
+        'credit_hint': '学业表现：以参赛证明、作品材料、获奖证书作为审核依据。',
+        'rule_ref': '学业附加分：计算机类竞赛按国家级/省级/校级奖项核验。',
+        'official_url': 'https://jsjds.blcu.edu.cn/',
+        'images': ['https://jsjds.blcu.edu.cn/images/banner11.PNG'],
+        'roi_score': 4.2,
+        'keywords': ['计算机', '软件', '人工智能', '信息', '网络', '数据'],
+    },
+    {
+        'id': 'EVG-EI-004',
+        'title': '全国大学生信息安全竞赛',
+        'category': '信息安全',
+        'organizer': '信息安全类专业教学指导委员会',
+        'season_months': '通常 4-8 月',
+        'description': '覆盖作品赛与攻防实践，适合网络工程、信息安全、计算机和电子信息方向学生积累安全项目。',
+        'credit_hint': '学业表现：按竞赛通知、参赛记录、获奖证书和综测细则审核。',
+        'rule_ref': '学业附加分：信息安全竞赛按学科竞赛获奖标准核验。',
+        'official_url': 'https://www.ciscn.cn/',
+        'images': ['https://www.ciscn.cn/uploads/banner/2025-banner.jpg'],
+        'roi_score': 4.1,
+        'keywords': ['安全', '网络', '计算机', '软件', '信息'],
+    },
+    {
+        'id': 'EVG-EI-005',
+        'title': '全国大学生数学建模竞赛',
+        'category': '数学建模',
+        'organizer': '中国工业与应用数学学会',
+        'season_months': '通常 9 月',
+        'description': '三人组队完成建模、求解与论文撰写，适合电子信息、计算机、数据分析方向提前训练算法和表达。',
+        'credit_hint': '学业表现：按建模竞赛级别、获奖证书和材料完整性审核。',
+        'rule_ref': '学业附加分：数学建模竞赛按获奖等级核验。',
+        'official_url': 'https://www.mcm.edu.cn/',
+        'images': ['https://www.mcm.edu.cn/theme/mcm/image/top_cn.jpg'],
+        'roi_score': 4.0,
+        'keywords': ['数学', '统计', '计算机', '电子', '信息', '数据'],
+    },
+    {
+        'id': 'EVG-EI-006',
+        'title': '全国大学生物联网设计竞赛',
+        'category': '物联网',
+        'organizer': '全国高等学校计算机教育研究会',
+        'season_months': '通常 4-9 月',
+        'description': '围绕感知、通信、平台和应用完成物联网系统方案，适合电子、通信、嵌入式与软件协同项目。',
+        'credit_hint': '学业表现：以作品、参赛证明和获奖证书审核。',
+        'rule_ref': '学业附加分：物联网与电子信息类竞赛按细则核验。',
+        'official_url': 'http://iot.sjtu.edu.cn/',
+        'images': ['https://iot.sjtu.edu.cn/favicon.ico'],
+        'roi_score': 4.0,
+        'keywords': ['物联网', '电子', '通信', '嵌入式', '信息'],
+    },
+    {
+        'id': 'EVG-GEN-001',
+        'title': '挑战杯系列竞赛',
+        'category': '创新创业',
+        'organizer': '共青团中央等',
+        'season_months': '按大挑/小挑战周期',
+        'description': '覆盖学术科技作品和创业计划，适合把课程项目、科研训练或社会实践沉淀为可参赛成果。',
+        'credit_hint': '学业表现或德育表现：按项目属性、证明材料和获奖等级审核。',
+        'rule_ref': '综测加分以学院通知、竞赛目录和最终获奖证明为准。',
+        'official_url': 'https://tiaozhanbei.net/',
+        'images': [],
+        'roi_score': 3.9,
+        'keywords': ['创新', '创业', '管理', '设计'],
+    },
+    {
+        'id': 'EVG-GEN-002',
+        'title': 'RoboMaster 机甲大师高校系列赛',
+        'category': '机器人',
+        'organizer': '大疆创新',
+        'season_months': '通常全年分阶段',
+        'description': '大型机器人竞赛与工程项目，适合机械、电子、控制、视觉算法和软件协同能力训练。',
+        'credit_hint': '学业表现：按赛事级别、队伍证明、获奖证书和贡献材料审核。',
+        'rule_ref': '学业附加分：机器人与工程实践竞赛按奖项等级核验。',
+        'official_url': 'https://www.robomaster.com/zh-CN',
+        'images': ['https://rm-static.djicdn.com/documents/55708/6d77a3be8b2431741835508145145792.png'],
+        'roi_score': 3.8,
+        'keywords': ['机器人', '自动化', '电子', '机械', '控制', '计算机'],
+    },
+]
+
+
+def _competition_dimension(item):
+    if item['category'] in ['创新创业']:
+        return 'academic', '学业'
+    return 'academic', '学业'
+
+
+def _recommended_evergreen_opportunities(user):
+    profile = ' '.join([
+        getattr(user, 'department', '') or '',
+        getattr(user, 'class_name', '') or '',
+        getattr(user, 'name', '') or '',
+    ])
+    ranked = []
+    for index, item in enumerate(EVERGREEN_COMPETITIONS):
+        score = sum(1 for keyword in item['keywords'] if keyword and keyword in profile)
+        if score == 0 and any(key in profile for key in ['电子', '信息', '计算机', '通信', '软件']):
+            score = 1 if item['id'].startswith('EVG-EI') else 0
+        ranked.append((score, -index, item))
+    selected = [item for score, _, item in sorted(ranked, reverse=True) if score > 0]
+    if len(selected) < 6:
+        selected.extend(item for _, _, item in ranked if item not in selected)
+    opportunities = []
+    for item in selected[:8]:
+        dimension, dimension_label = _competition_dimension(item)
+        opportunities.append({
+            'id': item['id'],
+            'source_type': 'evergreen',
+            'source_label': '常驻赛事',
+            'title': item['title'],
+            'category': item['category'],
+            'dimension': dimension,
+            'dimension_label': dimension_label,
+            'organizer': item['organizer'],
+            'location': '',
+            'start_time': '',
+            'deadline': '',
+            'season_months': item['season_months'],
+            'credit_hint': item['credit_hint'],
+            'rule_ref': item['rule_ref'],
+            'official_url': item['official_url'],
+            'registration_url': '',
+            'contact_email': '',
+            'article_url': '',
+            'group_qr_url': '',
+            'description': item['description'],
+            'requirements': ['赛事通知', '报名或参赛证明', '过程材料', '获奖证书或结项证明'],
+            'tags': ['AI专业推荐', item['category'], item['season_months']],
+            'attachments': [],
+            'images': item.get('images', []),
+            'roi_score': item['roi_score'],
+            'in_basket': False,
+            'status': '常驻准备',
+            'activity_id': item['id'],
+        })
+    return opportunities
+
+
 @app.route('/api/opportunities', methods=['GET', 'POST'])
 @login_required
 def api_opportunities_compat():
@@ -441,7 +614,10 @@ def api_opportunities_compat():
         dimension = request.args.get('dimension', '')
         keyword = request.args.get('keyword', '').strip().lower()
 
-        opportunities = [_activity_to_opportunity(item) for item in load_activities()]
+        opportunities = (
+            [_activity_to_opportunity(item) for item in load_activities()]
+            + _recommended_evergreen_opportunities(current_user)
+        )
         if source_type:
             opportunities = [item for item in opportunities if item['source_type'] == source_type]
         if category:
