@@ -423,6 +423,21 @@ function switchTab(tab: string) {
   }
 }
 
+function switchRole(role: 'student' | 'admin') {
+  if (role === 'admin') {
+    if (!canViewAdmin.value) return
+    window.location.assign('/back-to-admin')
+    return
+  }
+  if (canViewAdmin.value) {
+    window.location.assign('/view-as-student')
+    return
+  }
+  store.switchRole('student')
+  router.push('/student')
+  nextTick(renderCharts)
+}
+
 async function logout() {
   await fetch('/api/auth/logout', {
     method: 'POST',
@@ -1519,6 +1534,11 @@ onMounted(loadAll)
           <strong>综测星轨</strong>
           <small>Zongce Agent</small>
         </div>
+      </div>
+
+      <div v-if="canViewAdmin" class="role-switch">
+        <button :class="{ active: store.roleMode === 'admin' }" @click="switchRole('admin')">管理端</button>
+        <button :class="{ active: store.roleMode === 'student' }" @click="switchRole('student')">学生端</button>
       </div>
 
       <nav class="nav-list">
