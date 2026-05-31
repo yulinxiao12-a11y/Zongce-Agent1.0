@@ -431,6 +431,114 @@ def _activity_to_opportunity(activity):
     }
 
 
+def _frontend_dimension(category):
+    if category == 'sports':
+        return 'arts_sports'
+    if category in ('moral', 'academic', 'arts_sports'):
+        return category
+    return 'academic'
+
+
+def _dimension_meta():
+    return {
+        'moral': {
+            'label': CAT_INFO['moral']['name'],
+            'base': CAT_INFO['moral']['base'],
+            'cap': CAT_INFO['moral']['extra_max'],
+            'weight': 0.20,
+        },
+        'academic': {
+            'label': CAT_INFO['academic']['name'],
+            'base': CAT_INFO['academic']['base'],
+            'cap': CAT_INFO['academic']['extra_max'],
+            'weight': 0.65,
+        },
+        'arts_sports': {
+            'label': CAT_INFO['sports']['name'],
+            'base': CAT_INFO['sports']['base'],
+            'cap': CAT_INFO['sports']['extra_max'],
+            'weight': 0.15,
+        },
+    }
+
+
+def _student_context_user():
+    requested_id = request.args.get('user_id', type=int)
+    if current_user.role != 'admin':
+        return current_user
+
+    requested = User.query.get(requested_id) if requested_id else None
+    if requested and requested.role == 'student':
+        return requested
+
+    return (
+        User.query.filter_by(role='student', is_active=True).order_by(User.id).first()
+        or current_user
+    )
+
+
+def _all_opportunities_for_user(user):
+    return (
+        [_activity_to_opportunity(item) for item in load_activities()]
+        + _recommended_evergreen_opportunities(user)
+    )
+
+
+def _catalog_item_to_opportunity(item):
+    dimension = _frontend_dimension(item.category)
+    return {
+        'id': f'CAT-{item.id}',
+        'source_type': 'evergreen',
+        'source_label': '星轨探索',
+        'title': item.title,
+        'category': item.section or CAT_INFO.get(item.category, {}).get('name', '综测项目'),
+        'dimension': dimension,
+        'dimension_label': CAT_INFO.get(item.category, {}).get('name', dimension),
+        'organizer': '综测细则目录',
+        'location': '',
+        'start_time': '',
+        'deadline': '',
+        'season_months': '',
+        'credit_hint': item.description or f'{item.level}项目，预计可加 {item.score:g} 分',
+        'rule_ref': item.section or item.note or '',
+        'official_url': '',
+        'registration_url': '',
+        'contact_email': '',
+        'article_url': '',
+        'group_qr_url': '',
+        'description': item.description or item.title,
+        'requirements': [
+            proof.get('label') or proof.get('type') or ''
+            for proof in get_required_proofs({'subcategory': item.subcategory, 'title': item.title})
+            if proof.get('label') or proof.get('type')
+        ],
+        'tags': [value for value in [item.level, item.section] if value],
+        'attachments': [],
+        'images': [],
+        'roi_score': float(item.score or 0),
+        'in_basket': False,
+        'status': '备赛规划',
+        'activity_id': f'CAT-{item.id}',
+        'catalog_item_id': item.id,
+    }
+
+
+def _find_opportunity_for_user(user, opportunity_id):
+    target = str(opportunity_id)
+    if target.startswith('CAT-'):
+        catalog_item = CatalogItem.query.get(target[4:])
+        if catalog_item and catalog_item.is_active:
+            return _catalog_item_to_opportunity(catalog_item)
+    for item in _all_opportunities_for_user(user):
+        if str(item.get('id')) == target:
+            return item
+    return None
+
+
+def _basket_session_key(user_id):
+    return f'plan_basket_{user_id}'
+
+
 EVERGREEN_COMPETITIONS = [
     {
         'id': 'EVG-EI-001',
@@ -650,6 +758,162 @@ def api_opportunities_compat():
         'registration_url': data.get('registration_url', ''),
     })
     return jsonify(_activity_to_opportunity(activity)), 201
+
+
+@app.route('/api/dashboard/summary')
+@login_required
+def api_dashboard_summary():
+    user = _student_context_user()
+    meta = _dimension_meta()
+    totals = {key: 0.0 for key in meta}
+    ledgers = []
+
+    user_items = UserItem.query.filter_by(user_id=user.id).order_by(
+        UserItem.created_at.desc()
+    ).all()
+    for item in user_items:
+        catalog_item = item.catalog_item
+        dimension = _frontend_dimension(catalog_item.category if catalog_item else '')
+        totals[dimension] += float(item.score or 0)
+        ledgers.append({
+            'title': (catalog_item.title if catalog_item else item.custom_title) or '',
+            'dimension': dimension,
+            'score': float(item.score or 0),
+            'rule_ref': (catalog_item.section if catalog_item else item.source) or '',
+        })
+
+    details = []
+    weighted_total = 0.0
+    for key, info in meta.items():
+        raw_add = totals[key]
+        normalized_add = min(raw_add, float(info['cap']))
+        score = min(100.0, float(info['base']) + normalized_add)
+        weighted = score * float(info['weight'])
+        weighted_total += weighted
+        details.append({
+            'key': key,
+            'label': info['label'],
+            'base': info['base'],
+            'raw_add': round(raw_add, 2),
+            'normalized_add': round(normalized_add, 2),
+            'deduction': 0,
+            'score': round(score, 2),
+            'weight': info['weight'],
+            'weighted': round(weighted, 2),
+            'cap': info['cap'],
+        })
+
+    pending_statuses = ['pending', 'pending_ai', 'pending_human', 'needs_more']
+    pending = Submission.query.filter(
+        Submission.user_id == user.id,
+        Submission.status.in_(pending_statuses),
+    ).order_by(Submission.created_at.desc()).all()
+    pending_score = 0.0
+    for item in pending:
+        if item.catalog_item_id:
+            catalog_item = CatalogItem.query.get(item.catalog_item_id)
+            if catalog_item:
+                pending_score += float(catalog_item.score or 0)
+
+    total = round(weighted_total, 2)
+    return jsonify({
+        'user': {
+            'name': user.name,
+            'college': user.department,
+            'major': user.class_name,
+        },
+        'score': {
+            'rule_version': '2025-07-electronic-info',
+            'total': total,
+            'details': details,
+        },
+        'pending_score': round(pending_score, 2),
+        'goal_gap': max(0, round(90 - total, 2)),
+        'ledgers': ledgers,
+        'pending_applications': [_submission_to_certification(item) for item in pending],
+    })
+
+
+@app.route('/api/plan-basket', methods=['GET', 'POST'])
+@login_required
+def api_plan_basket():
+    user = _student_context_user()
+    key = _basket_session_key(user.id)
+    basket = session.get(key, [])
+
+    if request.method == 'GET':
+        rows = []
+        for item in basket:
+            opportunity = _find_opportunity_for_user(user, item.get('opportunity_id'))
+            if opportunity:
+                rows.append({
+                    'id': item.get('id'),
+                    'stage': item.get('stage') or '想参加',
+                    'note': item.get('note') or '',
+                    'opportunity': opportunity,
+                })
+        return jsonify(rows)
+
+    data = request.get_json(silent=True) or {}
+    catalog_item_id = data.get('catalog_item_id')
+    opportunity_id = f'CAT-{catalog_item_id}' if catalog_item_id else data.get('opportunity_id')
+    opportunity = _find_opportunity_for_user(user, opportunity_id)
+    if not opportunity:
+        return jsonify({'error': '机会不存在'}), 404
+
+    for item in basket:
+        if str(item.get('opportunity_id')) == str(opportunity_id):
+            return jsonify({
+                'id': item.get('id'),
+                'stage': item.get('stage') or '想参加',
+                'note': item.get('note') or '',
+                'opportunity': opportunity,
+            })
+
+    item = {
+        'id': int(datetime.utcnow().timestamp() * 1000),
+        'opportunity_id': opportunity_id,
+        'stage': data.get('stage') or '想参加',
+        'note': data.get('note') or '',
+    }
+    basket.append(item)
+    session[key] = basket
+    session.modified = True
+    return jsonify({
+        'id': item['id'],
+        'stage': item['stage'],
+        'note': item['note'],
+        'opportunity': opportunity,
+    }), 201
+
+
+@app.route('/api/plan-basket/<int:item_id>', methods=['PATCH', 'DELETE'])
+@login_required
+def api_plan_basket_detail(item_id):
+    user = _student_context_user()
+    key = _basket_session_key(user.id)
+    basket = session.get(key, [])
+    item = next((row for row in basket if int(row.get('id', 0)) == item_id), None)
+    if not item:
+        return jsonify({'error': '清单条目不存在'}), 404
+
+    if request.method == 'DELETE':
+        session[key] = [row for row in basket if int(row.get('id', 0)) != item_id]
+        session.modified = True
+        return jsonify({'success': True})
+
+    data = request.get_json(silent=True) or {}
+    item['stage'] = data.get('stage', item.get('stage') or '想参加')
+    item['note'] = data.get('note', item.get('note') or '')
+    session[key] = basket
+    session.modified = True
+    opportunity = _find_opportunity_for_user(user, item.get('opportunity_id'))
+    return jsonify({
+        'id': item['id'],
+        'stage': item['stage'],
+        'note': item['note'],
+        'opportunity': opportunity,
+    })
 
 
 def _honor_owner_id():
@@ -1405,6 +1669,7 @@ def api_analyze():
                 'risk_level': m.get('risk_level', 'low'),
                 'decision': m.get('decision', 'medium'),
                 'reason': m.get('reason', ''),
+                'audit': m.get('audit', {}),
             } for m in r['matches']],
         })
 
@@ -1463,30 +1728,42 @@ def api_submissions():
         ai_confidence = data.get('ai_confidence', 0)
         ai_decision = data.get('ai_decision', 'medium')
         ai_reason = data.get('ai_reason', '')
+        ai_audit = data.get('ai_audit') or {}
+        manual_title = (data.get('manual_title') or data.get('title') or '').strip()
+        manual_category = (data.get('manual_category') or data.get('category') or 'academic').strip()
+        manual_level = (data.get('manual_level') or data.get('level') or '').strip()
+        manual_description = (data.get('manual_description') or data.get('description') or '').strip()
+        try:
+            manual_score = float(data.get('manual_score') or data.get('score') or 0)
+        except (TypeError, ValueError):
+            manual_score = 0
 
-        ci = CatalogItem.query.get(catalog_item_id)
-        if not ci:
+        ci = CatalogItem.query.get(catalog_item_id) if catalog_item_id else None
+        if catalog_item_id and not ci:
             return jsonify({'error': '综测项目不存在'}), 404
+        if not ci and not manual_title:
+            return jsonify({'error': '请填写加分项目名称'}), 400
 
         # ---- 查重：已通过/审核中的项目不允许重复提交 ----
-        existing_item = UserItem.query.filter_by(
-            user_id=current_user.id, catalog_item_id=catalog_item_id
-        ).first()
-        if existing_item:
-            return jsonify({'error': f'该项目「{ci.title}」已在你的星轨加分中（+{existing_item.score}分），不能重复提交', 'code': 'duplicate'}), 409
+        if ci:
+            existing_item = UserItem.query.filter_by(
+                user_id=current_user.id, catalog_item_id=catalog_item_id
+            ).first()
+            if existing_item:
+                return jsonify({'error': f'该项目「{ci.title}」已在你的星轨加分中（+{existing_item.score}分），不能重复提交', 'code': 'duplicate'}), 409
 
-        existing_sub = Submission.query.filter(
-            Submission.user_id == current_user.id,
-            Submission.catalog_item_id == catalog_item_id,
-            Submission.status.in_(['pending', 'auto_approved']),
-        ).first()
-        if existing_sub:
-            status_label = '审核中' if existing_sub.status == 'pending' else '已AI自动通过'
-            return jsonify({'error': f'该项目「{ci.title}」已有提交记录（{status_label}），请等待审核结果', 'code': 'duplicate'}), 409
+            existing_sub = Submission.query.filter(
+                Submission.user_id == current_user.id,
+                Submission.catalog_item_id == catalog_item_id,
+                Submission.status.in_(['pending', 'needs_more', 'auto_approved']),
+            ).first()
+            if existing_sub:
+                status_label = '审核中' if existing_sub.status in ('pending', 'needs_more') else '已AI自动通过'
+                return jsonify({'error': f'该项目「{ci.title}」已有提交记录（{status_label}），请等待审核结果', 'code': 'duplicate'}), 409
         # --------------------------------------------------------
 
-        title = ci.title
-        description = ci.description
+        title = ci.title if ci else manual_title
+        description = ci.description if ci else manual_description
 
         completion_date = None
         if completion_date_str:
@@ -1505,7 +1782,7 @@ def api_submissions():
             return jsonify({'error': '请先上传证明文件'}), 400
 
         # Check required proofs completeness
-        required_proofs = get_required_proofs({'subcategory': ci.subcategory})
+        required_proofs = get_required_proofs({'subcategory': ci.subcategory}) if ci else []
         submitted_proof_types = set(f.proof_type for f in proof_files if f.proof_type)
         required_types = set(p['type'] for p in required_proofs)
         missing_proofs = required_types - submitted_proof_types
@@ -1513,15 +1790,33 @@ def api_submissions():
         proof_filenames = [f.original_filename for f in proof_files]
         proof_filepath = proof_files[0].file_path
 
-        # Determine status based on proof completeness AND AI confidence
+        # Determine status based on proof completeness AND AI confidence.
+        # AI only provides an initial recommendation; new submissions never auto-post score.
         proofs_complete = len(missing_proofs) == 0
-        if proofs_complete and ai_decision == 'high':
-            status = 'auto_approved'
-        elif not proofs_complete:
-            status = 'pending'
+        status = 'pending'
+        if not proofs_complete:
+            status = 'needs_more'
             ai_reason = (ai_reason + f' [缺失材料: {", ".join(missing_proofs)}]').strip()
-        else:
-            status = 'pending'
+        if ai_audit.get('missing_fields') or ai_audit.get('status') in ('NEED_SUPPLEMENT', 'HIGH_RISK'):
+            status = 'needs_more'
+
+        audit_payload = {
+            'required_proofs': [p['type'] for p in required_proofs],
+            'submitted_proofs': list(submitted_proof_types),
+            'missing_proofs': list(missing_proofs),
+            'proofs_complete': proofs_complete,
+            'audit': ai_audit,
+            'matched_regulation': ai_audit.get('matched_regulation', {}),
+            'extracted_features': ai_audit.get('extracted_features', {}),
+            'risk_assessment': ai_audit.get('risk_assessment', {}),
+            'missing_fields': ai_audit.get('missing_fields', []),
+            'audit_chain': ai_audit.get('audit_chain', []),
+            'manual_submission': not bool(ci),
+            'manual_category': manual_category if not ci else '',
+            'manual_level': manual_level if not ci else '',
+            'manual_score': manual_score if not ci else None,
+            'manual_description': manual_description if not ci else '',
+        }
 
         submission = Submission(
             user_id=current_user.id,
@@ -1535,12 +1830,7 @@ def api_submissions():
             ai_confidence=ai_confidence,
             ai_decision=ai_decision,
             ai_reason=ai_reason,
-            ai_matched_items=json.dumps({
-                'required_proofs': [p['type'] for p in required_proofs],
-                'submitted_proofs': list(submitted_proof_types),
-                'missing_proofs': list(missing_proofs),
-                'proofs_complete': proofs_complete,
-            }),
+            ai_matched_items=json.dumps(audit_payload, ensure_ascii=False),
         )
         db.session.add(submission)
         db.session.commit()
@@ -1550,26 +1840,14 @@ def api_submissions():
             uf.submission_id = submission.id
         db.session.commit()
 
-        # Auto-approve: create UserItem
-        if status == 'auto_approved':
-            ui = UserItem(
-                user_id=current_user.id,
-                catalog_item_id=catalog_item_id,
-                score=ci.score,
-                completion_date=completion_date,
-                source='upload',
-                submission_id=submission.id,
-            )
-            db.session.add(ui)
-            db.session.commit()
-
         return jsonify({
             'success': True,
             'submission_id': submission.id,
             'status': status,
-            'auto_added': status == 'auto_approved',
+            'auto_added': False,
             'proofs_complete': proofs_complete,
             'missing_proofs': list(missing_proofs),
+            'audit': ai_audit,
         })
 
 
@@ -1604,16 +1882,30 @@ def api_submission_files(sub_id):
 @admin_required
 def api_admin_submissions():
     status_filter = request.args.get('status', '')
+    queue_filter = request.args.get('queue', '')
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 20, type=int)
 
     query = Submission.query
-    if status_filter:
+    if queue_filter == 'high_confidence':
+        query = query.filter(Submission.status.in_(['pending', 'needs_more']), Submission.ai_confidence >= 90)
+    elif queue_filter in ('pending', 'pending_human'):
+        query = query.filter_by(status='pending')
+    elif queue_filter == 'needs_more':
+        query = query.filter_by(status='needs_more')
+    elif queue_filter == 'risk':
+        query = query.filter(Submission.status.in_(['pending', 'needs_more']), Submission.ai_confidence < 60)
+    elif queue_filter == 'approved':
+        query = query.filter(Submission.status.in_(['approved', 'auto_approved']))
+    elif queue_filter == 'rejected':
+        query = query.filter_by(status='rejected')
+    elif status_filter:
         query = query.filter_by(status=status_filter)
 
     pagination = query.order_by(
-        db.case({'pending': 0, 'auto_approved': 1, 'approved': 2, 'rejected': 3},
+        db.case({'needs_more': 0, 'pending': 1, 'auto_approved': 2, 'approved': 3, 'rejected': 4},
                 value=Submission.status),
+        Submission.ai_confidence.asc(),
         Submission.created_at.desc()
     ).paginate(page=page, per_page=per_page, error_out=False)
 
@@ -1655,13 +1947,19 @@ def api_admin_submissions():
             'ai_decision': s.ai_decision,
             'ai_reason': s.ai_reason,
             'review_remarks': s.review_remarks,
-            'score': ci.score if ci else 0,
-            'level': ci.level if ci else '',
-            'category': ci.category if ci else '',
+            'score': ci.score if ci else proof_info.get('manual_score', 0),
+            'level': ci.level if ci else proof_info.get('manual_level', ''),
+            'category': ci.category if ci else proof_info.get('manual_category', ''),
             'required_proofs': proof_info.get('required_proofs', []),
             'submitted_proofs': proof_info.get('submitted_proofs', []),
             'missing_proofs': proof_info.get('missing_proofs', []),
             'proofs_complete': proof_info.get('proofs_complete', False),
+            'audit': proof_info.get('audit', {}),
+            'matched_regulation': proof_info.get('matched_regulation', {}),
+            'extracted_features': proof_info.get('extracted_features', {}),
+            'risk_assessment': proof_info.get('risk_assessment', {}),
+            'missing_fields': proof_info.get('missing_fields', []),
+            'audit_chain': proof_info.get('audit_chain', []),
             'files': linked_files,
             'created_at': s.created_at.strftime('%Y-%m-%d %H:%M'),
         })
@@ -1690,26 +1988,53 @@ def api_review_submission(sub_id):
         # Create UserItem
         score = data.get('score', 0)
         catalog_id = sub.catalog_item_id
+        custom_title = None
+        custom_score = None
         if catalog_id:
             ci = CatalogItem.query.get(catalog_id)
             if ci:
                 score = ci.score
+        else:
+            try:
+                proof_info = json.loads(sub.ai_matched_items) if sub.ai_matched_items else {}
+            except Exception:
+                proof_info = {}
+            score = data.get('score', proof_info.get('manual_score', score))
+            custom_score = score
+            custom_title = sub.title
 
-        ui = UserItem(
-            user_id=sub.user_id,
-            catalog_item_id=catalog_id,
-            score=score,
-            completion_date=sub.completion_date,
-            source='upload',
-            submission_id=sub.id,
-        )
-        db.session.add(ui)
+        if not UserItem.query.filter_by(user_id=sub.user_id, submission_id=sub.id).first():
+            ui = UserItem(
+                user_id=sub.user_id,
+                catalog_item_id=catalog_id,
+                custom_title=custom_title,
+                custom_score=custom_score,
+                score=score,
+                completion_date=sub.completion_date,
+                source='upload',
+                submission_id=sub.id,
+            )
+            db.session.add(ui)
 
     elif action == 'reject':
         sub.status = 'rejected'
         sub.reviewer_id = current_user.id
         sub.review_remarks = data.get('remarks', '材料不全或不符合要求')
         sub.reviewed_at = datetime.utcnow()
+
+    elif action == 'needs_more':
+        sub.status = 'needs_more'
+        sub.reviewer_id = current_user.id
+        sub.review_remarks = data.get('remarks', '请补充材料后复核')
+        sub.reviewed_at = datetime.utcnow()
+
+    elif action == 'return':
+        sub.status = 'needs_more'
+        sub.reviewer_id = current_user.id
+        sub.review_remarks = data.get('remarks', '重新打回，需补充材料后复核')
+        sub.reviewed_at = datetime.utcnow()
+        for item in UserItem.query.filter_by(user_id=sub.user_id, submission_id=sub.id).all():
+            db.session.delete(item)
 
     elif action == 'reassign':
         new_catalog_id = data.get('catalog_item_id', '')
@@ -1770,7 +2095,7 @@ def _submission_to_certification(s, admin_view=False):
         'user_id': s.user_id,
         'catalog_item_id': s.catalog_item_id,
         'title': s.title,
-        'dimension': s.category if hasattr(s, 'category') else (ci.category if ci else 'academic'),
+        'dimension': _frontend_dimension(ci.category if ci else 'academic'),
         'award_level': ci.level if ci else '',
         'material_manifest': {
             proof_type: proof_type in proof_info.get('submitted_proofs', [])
@@ -1782,6 +2107,11 @@ def _submission_to_certification(s, admin_view=False):
             'missing_materials': missing,
             'rule_ref': ci.section if ci else '',
             'recommendation': s.ai_reason or ('AI建议通过，等待人工复核。' if s.ai_confidence >= 85 else '建议人工复核材料。'),
+            'matched_regulation': proof_info.get('matched_regulation', {}),
+            'extracted_features': proof_info.get('extracted_features', {}),
+            'risk_assessment': proof_info.get('risk_assessment', {}),
+            'missing_fields': proof_info.get('missing_fields', []),
+            'audit_chain': proof_info.get('audit_chain', []),
         },
         'ai_confidence': round((s.ai_confidence or 0) / 100, 3),
         'risk_tags': risk_tags,
@@ -1796,13 +2126,15 @@ def _submission_to_certification(s, admin_view=False):
     if admin_view:
         item['required_proofs'] = proof_info.get('required_proofs', [])
         item['submitted_proofs'] = proof_info.get('submitted_proofs', [])
+        item['missing_fields'] = proof_info.get('missing_fields', [])
+        item['audit_chain'] = proof_info.get('audit_chain', [])
     return item
 
 
 @app.route('/api/material-templates')
 @login_required
 def api_material_templates():
-    dimension_weights = {'moral': 0.2, 'academic': 0.65, 'sports': 0.15}
+    dimension_weights = {'moral': 0.2, 'academic': 0.65, 'arts_sports': 0.15}
     current_doc = RegulationDoc.query.filter_by(is_current=True).order_by(
         RegulationDoc.uploaded_at.desc()
     ).first()
@@ -1827,11 +2159,29 @@ def api_material_templates():
         } if current_doc else None,
         'strict_materials': strict_materials[:12] or ['获奖证书', '参赛证明', '官方来源证明'],
         'dimensions': [
-            {'key': key, 'label': value['name'], 'base': value['base'], 'cap': value['extra_max'], 'weight': dimension_weights.get(key, 0)}
+            {'key': _frontend_dimension(key), 'label': value['name'], 'base': value['base'], 'cap': value['extra_max'], 'weight': dimension_weights.get(_frontend_dimension(key), 0)}
             for key, value in CAT_INFO.items()
         ],
         'notes': ['AI初审不等于最终入账，人工审核通过后才写入综测得分。'],
     })
+
+
+@app.route('/api/rule-documents')
+@login_required
+def api_rule_documents():
+    docs = RegulationDoc.query.order_by(
+        RegulationDoc.is_current.desc(),
+        RegulationDoc.uploaded_at.desc(),
+    ).all()
+    return jsonify([{
+        'id': doc.id,
+        'name': doc.title,
+        'version': doc.title,
+        'file_url': f'/api/admin/regulations/{doc.id}/file',
+        'notes': '',
+        'is_active': 1 if doc.is_current else 0,
+        'uploaded_at': doc.uploaded_at.strftime('%Y-%m-%d %H:%M'),
+    } for doc in docs])
 
 
 @app.route('/api/certifications', methods=['GET', 'POST'])
@@ -1874,7 +2224,7 @@ def api_certifications_compat():
     existing_sub = Submission.query.filter(
         Submission.user_id == current_user.id,
         Submission.catalog_item_id == catalog_item_id,
-        Submission.status.in_(['pending', 'auto_approved']),
+        Submission.status.in_(['pending', 'needs_more', 'auto_approved']),
     ).first()
     if existing_sub:
         return jsonify({'error': f'项目「{ci.title}」已有待审核记录，请等待审核结果', 'code': 'duplicate'}), 409
@@ -1886,7 +2236,8 @@ def api_certifications_compat():
     if ai_confidence <= 1:
         ai_confidence *= 100
     ai_decision = data.get('ai_decision') or ('high' if ai_confidence >= 85 else 'medium')
-    status = 'auto_approved' if not missing and ai_decision == 'high' else 'pending'
+    ai_audit = data.get('ai_audit') or {}
+    status = 'needs_more' if missing or ai_audit.get('missing_fields') else 'pending'
 
     submission = Submission(
         user_id=current_user.id,
@@ -1904,6 +2255,12 @@ def api_certifications_compat():
             'submitted_proofs': list(submitted_types),
             'missing_proofs': missing,
             'proofs_complete': len(missing) == 0,
+            'audit': ai_audit,
+            'matched_regulation': ai_audit.get('matched_regulation', {}),
+            'extracted_features': ai_audit.get('extracted_features', {}),
+            'risk_assessment': ai_audit.get('risk_assessment', {}),
+            'missing_fields': ai_audit.get('missing_fields', []),
+            'audit_chain': ai_audit.get('audit_chain', []),
         }, ensure_ascii=False),
     )
     db.session.add(submission)
@@ -1912,16 +2269,6 @@ def api_certifications_compat():
     for uf in proof_files:
         uf.submission_id = submission.id
     db.session.commit()
-
-    if status == 'auto_approved':
-        db.session.add(UserItem(
-            user_id=current_user.id,
-            catalog_item_id=ci.id,
-            score=ci.score,
-            source='upload',
-            submission_id=submission.id,
-        ))
-        db.session.commit()
 
     return jsonify(_submission_to_certification(submission))
 
@@ -1973,10 +2320,17 @@ def api_admin_certification_decision_compat(sub_id):
         sub.review_remarks = data.get('comment', '材料不符合要求')
         sub.reviewed_at = datetime.utcnow()
     elif decision == 'needs_more':
-        sub.status = 'pending'
+        sub.status = 'needs_more'
         sub.reviewer_id = current_user.id
         sub.review_remarks = data.get('comment', '请补充材料后复核')
         sub.reviewed_at = datetime.utcnow()
+    elif decision == 'return':
+        sub.status = 'needs_more'
+        sub.reviewer_id = current_user.id
+        sub.review_remarks = data.get('comment', '重新打回，需补充材料后复核')
+        sub.reviewed_at = datetime.utcnow()
+        for item in UserItem.query.filter_by(user_id=sub.user_id, submission_id=sub.id).all():
+            db.session.delete(item)
     else:
         return jsonify({'error': 'Unknown decision'}), 400
 
@@ -2001,10 +2355,10 @@ def api_admin_stats():
     return jsonify({
         'opportunity_count': opportunity_count,
         'application_count': Submission.query.count(),
-        'pending_count': Submission.query.filter_by(status='pending').count(),
+        'pending_count': Submission.query.filter(Submission.status.in_(['pending', 'needs_more'])).count(),
         'approved_score': round(float(approved_score), 1),
         'total_students': User.query.filter_by(role='student', is_active=True).count(),
-        'pending_reviews': Submission.query.filter_by(status='pending').count(),
+        'pending_reviews': Submission.query.filter(Submission.status.in_(['pending', 'needs_more'])).count(),
         'approved_today': Submission.query.filter(
             Submission.status.in_(['approved', 'auto_approved']),
             Submission.reviewed_at >= date.today()
