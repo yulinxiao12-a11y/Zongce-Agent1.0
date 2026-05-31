@@ -30,10 +30,13 @@
     <div class="flex-between mb-16">
         <div></div>
         <div class="filter-bar">
-            <select id="filterStatus" onchange="loadSubmissions()">
-                <option value="">全部状态</option>
-                <option value="pending" selected>待审核</option>
-                <option value="auto_approved">AI自动通过</option>
+            <button class="btn btn-success btn-sm" onclick="bulkApproveHighConfidence()"><i class="fas fa-check-double"></i> 高置信批量通过</button>
+            <select id="filterQueue" onchange="currentPage=1;loadSubmissions()">
+                <option value="">全部队列</option>
+                <option value="pending" selected>待人工审核</option>
+                <option value="high_confidence">绿灯高置信</option>
+                <option value="needs_more">需补材料</option>
+                <option value="risk">红灯高风险</option>
                 <option value="approved">已通过</option>
                 <option value="rejected">已驳回</option>
             </select>
@@ -47,7 +50,7 @@
                     <thead>
                         <tr>
                             <th>ID</th><th>学生</th><th>匹配项目</th><th>级别</th><th>得分</th>
-                            <th>材料</th><th>完整性</th><th>AI置信度</th><th>提交时间</th><th style="min-width:200px;">操作</th>
+                            <th>材料</th><th>AI 置信度</th><th>风控</th><th>提交时间</th><th style="min-width:230px;">操作</th>
                         </tr>
                     </thead>
                     <tbody id="submissionsTableBody">
@@ -65,6 +68,21 @@
             <button class="btn btn-outline btn-sm" id="btnNext" onclick="changePage(1)" disabled>下一页</button>
         </div>
     </div>
+</div>
+
+<!-- Audit Drawer -->
+<div class="audit-drawer-overlay" id="auditDrawerOverlay" style="display:none;" onclick="closeAuditDrawer(event)">
+    <aside class="audit-drawer" onclick="event.stopPropagation()">
+        <div class="audit-drawer-head">
+            <div>
+                <span id="drawerAuditId">#--</span>
+                <h3 id="drawerTitle">审核详情</h3>
+            </div>
+            <button type="button" onclick="closeAuditDrawer()" aria-label="关闭"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="audit-drawer-body" id="auditDrawerBody"></div>
+        <div class="audit-drawer-actions" id="auditDrawerActions"></div>
+    </aside>
 </div>
 
 <!-- Review Modal -->
@@ -88,7 +106,8 @@
 <script>
 const STATUS_LABELS = {
     pending: '<span class="status-badge status-pending">待审核</span>',
-    auto_approved: '<span class="status-badge status-auto_approved">AI通过</span>',
+    needs_more: '<span class="status-badge status-needs_more">需补材料</span>',
+    auto_approved: '<span class="status-badge status-auto_approved">历史AI通过</span>',
     approved: '<span class="status-badge status-approved">已通过</span>',
     rejected: '<span class="status-badge status-rejected">已驳回</span>',
 };
@@ -99,8 +118,8 @@ let totalPages = 1;
 let currentSub = null;
 
 async function loadSubmissions() {
-    const status = document.getElementById('filterStatus').value;
-    const resp = await fetch(`/api/admin/submissions?status=${status}&page=${currentPage}&per_page=15`);
+    const queue = document.getElementById('filterQueue').value;
+    const resp = await fetch(`/api/admin/submissions?queue=${queue}&page=${currentPage}&per_page=15`);
     const data = await resp.json();
 
     totalPages = Math.ceil(data.total / data.per_page) || 1;
@@ -115,8 +134,11 @@ async function loadSubmissions() {
         return;
     }
 
-    document.getElementById('submissionsTableBody').innerHTML = data.submissions.map(s => `
-        <tr>
+    document.getElementById('submissionsTableBody').innerHTML = data.submissions.map(s => {
+        const level = confidenceLevel(s.ai_confidence, s);
+        const riskTags = ((s.risk_assessment && s.risk_assessment.risk_tags) || []).slice(0, 3);
+        return `
+        <tr class="audit-row audit-row-${level}">
             <td style="white-space:nowrap;">#${s.id}</td>
             <td style="white-space:nowrap;"><strong>${escHtml(s.student_name)}</strong><br><span style="font-size:11px;color:var(--text-muted);">${escHtml(s.student_id)}</span></td>
             <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;"><strong>${escHtml(s.title)}</strong></td>
@@ -126,26 +148,30 @@ async function loadSubmissions() {
                 ${s.files && s.files.length > 0 ? `<span style="font-size:12px;cursor:pointer;color:var(--primary);" onclick="showFiles(${s.id})"><i class="fas fa-paperclip"></i> ${s.files.length}个</span>` : '-'}
             </td>
             <td style="white-space:nowrap;">
-                ${s.proofs_complete ? '<span style="color:var(--success);font-size:11px;font-weight:600;"><i class="fas fa-check-circle"></i> 完整</span>' : (s.missing_proofs && s.missing_proofs.length > 0 ? `<span style="color:var(--danger);font-size:11px;">缺${s.missing_proofs.length}项</span>` : '--')}
+                <span class="confidence-tag confidence-${level}">${Number(s.ai_confidence).toFixed(1)}% · ${confidenceLabel(level)}</span>
             </td>
             <td style="white-space:nowrap;">
-                <span style="font-size:13px; color:${s.ai_confidence >= 80 ? 'var(--success)' : s.ai_confidence >= 40 ? 'var(--accent-amber)' : 'var(--danger)'}; font-weight:700;">
-                    ${Number(s.ai_confidence).toFixed(1)}%
-                </span>
-                <span style="font-size:11px;color:var(--text-muted);margin-left:2px;">${STATUS_LABELS[s.status] || s.status}</span>
+                <div class="risk-tag-list">
+                    ${riskTags.length ? riskTags.map(tag => `<span>${escHtml(tag)}</span>`).join('') : (s.missing_fields && s.missing_fields.length ? '<span>SUPPLEMENT_REQUIRED</span>' : '<span class="muted">--</span>')}
+                </div>
             </td>
             <td style="font-size:11px;white-space:nowrap;">${s.created_at}</td>
-            <td style="white-space:nowrap;min-width:200px;">
+            <td style="white-space:nowrap;min-width:230px;">
                 <div class="action-btns">
-                    ${s.status === 'pending' ? `
+                    <button class="btn btn-outline btn-sm" onclick="openAuditDrawer(${s.id})"><i class="fas fa-list-check"></i> 证据链</button>
+                    ${['pending', 'needs_more'].includes(s.status) ? `
                     <button class="btn btn-success btn-sm" onclick="openReview(${s.id}, 'approve')"><i class="fas fa-check"></i> 通过</button>
+                    <button class="btn btn-outline btn-sm" onclick="openReview(${s.id}, 'needs_more')" style="color:var(--accent-amber);"><i class="fas fa-triangle-exclamation"></i> 补材料</button>
                     <button class="btn btn-outline btn-sm" onclick="openReview(${s.id}, 'reject')" style="color:var(--danger);"><i class="fas fa-times"></i> 驳回</button>
                     <button class="btn btn-outline btn-sm" onclick="openReview(${s.id}, 'reassign')"><i class="fas fa-exchange-alt"></i> 重分配</button>
-                    ` : `<span style="font-size:11px;color:var(--text-light);">${s.review_remarks||'--'}</span>`}
+                    ` : `
+                    <button class="btn btn-outline btn-sm" onclick="openReview(${s.id}, 'return')" style="color:var(--accent-amber);"><i class="fas fa-rotate-left"></i> 重新打回</button>
+                    <span style="font-size:11px;color:var(--text-light);">${s.review_remarks||'--'}</span>
+                    `}
                 </div>
             </td>
         </tr>
-    `).join('');
+    `}).join('');
 
     // Store submissions data for file viewing
     window._submissions = data.submissions;
@@ -169,11 +195,21 @@ function openReview(subId, action) {
         document.getElementById('reviewModalInfo').textContent = `通过提交 #${subId}，该加分将自动加入学生的综测库。`;
         actions.innerHTML = `<button class="btn btn-outline btn-sm" onclick="closeReview()">取消</button>
             <button class="btn btn-success btn-sm" onclick="submitReview()"><i class="fas fa-check"></i> 确认通过</button>`;
+    } else if (action === 'needs_more') {
+        title.textContent = '要求补充材料';
+        document.getElementById('reviewModalInfo').textContent = `提交 #${subId} 将进入补材料状态，学生补充佐证后再复核。`;
+        actions.innerHTML = `<button class="btn btn-outline btn-sm" onclick="closeReview()">取消</button>
+            <button class="btn btn-outline btn-sm" style="color:var(--accent-amber);" onclick="submitReview()"><i class="fas fa-triangle-exclamation"></i> 确认补材料</button>`;
     } else if (action === 'reject') {
         title.textContent = '驳回提交';
         document.getElementById('reviewModalInfo').textContent = `驳回提交 #${subId}，学生可重新提交。`;
         actions.innerHTML = `<button class="btn btn-outline btn-sm" onclick="closeReview()">取消</button>
             <button class="btn btn-outline btn-sm" style="color:var(--danger);" onclick="submitReview()"><i class="fas fa-times"></i> 确认驳回</button>`;
+    } else if (action === 'return') {
+        title.textContent = '重新打回材料';
+        document.getElementById('reviewModalInfo').textContent = `重新打回提交 #${subId}，状态将变为需补材料；如果已入账，将撤销该提交对应的综测加分。`;
+        actions.innerHTML = `<button class="btn btn-outline btn-sm" onclick="closeReview()">取消</button>
+            <button class="btn btn-outline btn-sm" style="color:var(--accent-amber);" onclick="submitReview()"><i class="fas fa-rotate-left"></i> 确认打回</button>`;
     } else {
         title.textContent = '重新分配项目';
         document.getElementById('reviewModalInfo').textContent = `将提交 #${subId} 关联到正确的综测项目。`;
@@ -212,6 +248,121 @@ async function submitReview() {
     } catch (err) {
         alert(err.message);
     }
+}
+
+function confidenceLevel(score, row) {
+    if ((row && row.status === 'needs_more') || Number(score) < 60) return 'red';
+    if (Number(score) >= 90 && !(row && row.missing_fields && row.missing_fields.length)) return 'green';
+    return 'amber';
+}
+
+function confidenceLabel(level) {
+    return level === 'green' ? '绿灯' : level === 'amber' ? '黄灯' : '红灯';
+}
+
+function proofTypeName(type) {
+    const names = {'appointment':'任职证明/聘书', 'certificate':'荣誉证书/证明', 'award_cert':'获奖证书',
+        'paper_publish':'论文发表证明', 'paper_content':'论文全文', 'project_doc':'立项/结项证明',
+        'project_result':'项目成果证明', 'patent_cert':'专利/软著证书', 'score_report':'成绩单/证书',
+        'cert_file':'等级证书/成绩单', 'transcript':'成绩单', 'admission':'录取证明',
+        'article':'发表文章证明', 'participation':'参赛证明', 'general':'相关证明材料'};
+    return names[type] || type || '未分类';
+}
+
+function openAuditDrawer(subId) {
+    const s = (window._submissions || []).find(row => row.id === subId);
+    if (!s) return;
+    const level = confidenceLevel(s.ai_confidence, s);
+    const features = s.extracted_features || {};
+    const regulation = s.matched_regulation || {};
+    const risk = s.risk_assessment || {};
+    document.getElementById('drawerAuditId').textContent = `#${s.id}`;
+    document.getElementById('drawerTitle').textContent = s.title || '审核详情';
+    document.getElementById('auditDrawerBody').innerHTML = `
+        <section class="drawer-section">
+            <h4>AI 判定结果</h4>
+            <div class="drawer-kv">
+                <span>学生</span><strong>${escHtml(s.student_name)}（${escHtml(s.student_id)}）</strong>
+                <span>建议项目</span><strong>${escHtml(s.title)}</strong>
+                <span>建议分值</span><strong>+${s.score || 0}</strong>
+                <span>置信度</span><strong><span class="confidence-tag confidence-${level}">${Number(s.ai_confidence).toFixed(1)}% · ${confidenceLabel(level)}</span></strong>
+                <span>状态</span><strong>${STATUS_LABELS[s.status] || escHtml(s.status)}</strong>
+            </div>
+        </section>
+        <section class="drawer-section">
+            <h4>结构化识别</h4>
+            <div class="drawer-kv">
+                <span>姓名</span><strong>${escHtml(features.detected_name || '未识别')}</strong>
+                <span>活动/证书</span><strong>${escHtml(features.event_name || s.title || '未识别')}</strong>
+                <span>等级</span><strong>${escHtml(features.award_level || s.level || '待确认')}</strong>
+                <span>角色</span><strong>${escHtml(features.rank_type || '待确认')}</strong>
+                <span>日期</span><strong>${escHtml(features.date || '未识别')}</strong>
+                <span>姓名匹配</span><strong>${features.is_name_matched ? '是' : '待核验'}</strong>
+            </div>
+        </section>
+        <section class="drawer-section">
+            <h4>细则锚点</h4>
+            <p>${escHtml(regulation.clause_text || s.description || '暂无细则文本，需人工核对。')}</p>
+        </section>
+        <section class="drawer-section">
+            <h4>风险预警链</h4>
+            <div class="risk-tag-list drawer-tags">${(risk.risk_tags || []).map(tag => `<span>${escHtml(tag)}</span>`).join('') || '<span class="muted">无明显风险标签</span>'}</div>
+            <p>${escHtml(risk.risk_description || s.ai_reason || '暂无额外说明。')}</p>
+        </section>
+        <section class="drawer-section">
+            <h4>需补充材料</h4>
+            <div class="missing-field-list">
+                ${(s.missing_fields || []).map(field => `<div><strong>${escHtml(field.field_name)}</strong><small>${escHtml(field.guidance_tips)}</small></div>`).join('') || '<p class="muted">暂无 AI 生成补件项。</p>'}
+            </div>
+        </section>
+        <section class="drawer-section">
+            <h4>核心证据链</h4>
+            <ol class="drawer-chain">${(s.audit_chain || []).map(step => `<li>${escHtml(step)}</li>`).join('') || '<li>暂无证据链，按原始材料人工核验。</li>'}</ol>
+        </section>
+        <section class="drawer-section">
+            <h4>原始材料</h4>
+            <div class="drawer-file-list">
+                ${(s.files || []).map(f => `<a href="/api/uploads/${f.file_path}" target="_blank"><i class="fas fa-paperclip"></i><span>${escHtml(f.filename)}</span><small>${escHtml(proofTypeName(f.proof_type))}</small></a>`).join('') || '<p class="muted">无附件</p>'}
+            </div>
+        </section>
+    `;
+    document.getElementById('auditDrawerActions').innerHTML = ['pending', 'needs_more'].includes(s.status) ? `
+        <button class="btn btn-outline btn-sm" onclick="openReview(${s.id}, 'reject')"><i class="fas fa-times"></i> 驳回</button>
+        <button class="btn btn-outline btn-sm" onclick="openReview(${s.id}, 'needs_more')"><i class="fas fa-triangle-exclamation"></i> 补材料</button>
+        <button class="btn btn-success btn-sm" onclick="openReview(${s.id}, 'approve')"><i class="fas fa-check"></i> 通过</button>
+    ` : `
+        <button class="btn btn-outline btn-sm" onclick="openReview(${s.id}, 'return')"><i class="fas fa-rotate-left"></i> 重新打回</button>
+        <span class="text-muted">该记录已处理</span>
+    `;
+    document.getElementById('auditDrawerOverlay').style.display = 'flex';
+}
+
+function closeAuditDrawer(event) {
+    if (event && event.target !== document.getElementById('auditDrawerOverlay')) return;
+    document.getElementById('auditDrawerOverlay').style.display = 'none';
+}
+
+async function bulkApproveHighConfidence() {
+    const rows = (window._submissions || []).filter(s =>
+        ['pending', 'needs_more'].includes(s.status)
+        && Number(s.ai_confidence) >= 90
+        && !(s.missing_fields && s.missing_fields.length)
+    );
+    if (!rows.length) {
+        alert('当前页没有可批量通过的绿灯高置信材料');
+        return;
+    }
+    if (!confirm(`确认通过当前页 ${rows.length} 条绿灯高置信材料？通过后将写入学生综测得分。`)) return;
+    for (const row of rows) {
+        await fetch(`/api/admin/submissions/${row.id}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ action: 'approve', remarks: '绿灯高置信材料批量通过。' })
+        });
+    }
+    showToast('批量审核完成');
+    loadSubmissions();
+    loadStats();
 }
 
 function showToast(msg) {

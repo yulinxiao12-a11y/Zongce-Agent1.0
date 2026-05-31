@@ -10,7 +10,7 @@ type DimensionKey = 'moral' | 'academic' | 'arts_sports'
 type OpportunitySource = 'notice' | 'evergreen'
 
 interface Opportunity {
-  id: number
+  id: number | string
   source_type: OpportunitySource
   source_label: string
   title: string
@@ -36,10 +36,11 @@ interface Opportunity {
   images?: string[]
   roi_score: number
   in_basket: boolean
+  activity_id?: string | number
 }
 
 interface BasketItem {
-  id: number
+  id: number | string
   stage: string
   note: string
   opportunity: Opportunity
@@ -126,6 +127,11 @@ interface AnalyzeMatch {
   confidence: number
   decision: string
   reason: string
+  risk_level?: string
+  confidence_detail?: string
+  section?: string
+  note?: string
+  audit?: AuditPayload
 }
 
 interface AnalyzeResult {
@@ -134,6 +140,28 @@ interface AnalyzeResult {
   extracted_text: string
   has_text_content: boolean
   matches: AnalyzeMatch[]
+}
+
+interface AuditPayload {
+  status?: string
+  confidence_score?: number
+  matched_regulation?: {
+    section?: string
+    clause_id?: string
+    clause_text?: string
+    score_calculated?: number
+  }
+  extracted_features?: Record<string, any>
+  risk_assessment?: {
+    risk_tags?: string[]
+    risk_description?: string
+  }
+  missing_fields?: Array<{
+    field_key: string
+    field_name: string
+    guidance_tips: string
+  }>
+  audit_chain?: string[]
 }
 
 interface AdminUser {
@@ -214,6 +242,7 @@ const adminDashboardStatusFilter = ref('')
 const catalogItems = ref<CatalogExplorerItem[]>([])
 const catalogFilters = ref<CatalogFilters>({ categories: [], levels: [], subcategories: [], sections: [] })
 const submittedCatalogIds = ref<Set<string>>(new Set())
+const basketCatalogIds = ref<Set<string>>(new Set())
 const catalogQuery = reactive({ category: '', level: '', section: '', subcategory: '', keyword: '' })
 const selectedOpportunity = ref<Opportunity | null>(null)
 const selectedDashboardApplication = ref<ApplicationItem | null>(null)
@@ -223,7 +252,7 @@ const userEditorVisible = ref(false)
 const resetPasswordVisible = ref(false)
 const userItemsVisible = ref(false)
 const draggedHonorId = ref<number | null>(null)
-const brokenOpportunityImages = ref<Set<number>>(new Set())
+const brokenOpportunityImages = ref<Set<number | string>>(new Set())
 
 const filters = reactive({
   dimension: '',
@@ -237,6 +266,7 @@ const materialSelectedFiles = ref<File[]>([])
 const materialServerFiles = ref<UploadedFile[]>([])
 const materialAnalysisResults = ref<AnalyzeResult[]>([])
 const materialAddedItems = ref<Array<{ id: string; fileId: number; filename: string; title: string; category: string; category_name?: string; level: string; score: number; confidence: number; status: string }>>([])
+const materialSupplementFiles = ref<Record<string, UploadedFile | null>>({})
 const materialExtraKeyword = ref('')
 const targetCatalogQuery = reactive({ category: '', level: '', keyword: '' })
 const selectedTargetItem = ref<CatalogExplorerItem | null>(null)
@@ -244,6 +274,15 @@ const targetRequiredProofs = ref<Array<{ type: string; name: string; description
 const targetProofFiles = ref<Record<string, UploadedFile | null>>({})
 const targetCompletionDate = ref('')
 const targetAiVerifyResult = ref('')
+const targetManualForm = reactive({
+  title: '',
+  category: 'academic',
+  level: '',
+  score: '',
+  description: '',
+  completion_date: '',
+})
+const targetManualFiles = ref<UploadedFile[]>([])
 
 const honorForm = reactive({ title: '', category: '证书', image_url: '' })
 const honorDropOver = ref(false)
@@ -428,6 +467,7 @@ const filteredTargetCatalogItems = computed(() => {
     return true
   }).slice(0, 30)
 })
+void filteredTargetCatalogItems
 
 function switchTab(tab: string) {
   if (store.roleMode === 'student') activeStudentTab.value = tab
@@ -580,13 +620,19 @@ function mapSubmissionToApplication(row: any): ApplicationItem {
     ai_review: {
       recognized_text: row.ai_reason || '',
       missing_materials: missing,
-      rule_ref: row.section || '',
+      rule_ref: row.matched_regulation?.section || row.section || '',
       recommendation: row.review_remarks || row.ai_reason || (confidence >= 0.85 ? 'AI 建议通过，等待人工复核。' : '建议人工复核材料。'),
+      matched_regulation: row.matched_regulation || {},
+      extracted_features: row.extracted_features || {},
+      risk_assessment: row.risk_assessment || {},
+      missing_fields: row.missing_fields || [],
+      audit_chain: row.audit_chain || [],
     },
     ai_confidence: confidence,
     risk_tags: [
       confidence >= 0.85 ? 'AI高置信' : confidence < 0.7 ? '需人工复核' : '待人工确认',
       ...(missing.length ? ['材料缺失'] : []),
+      ...((row.risk_assessment?.risk_tags || []) as string[]),
     ],
     suggested_score: Number(row.score || 0),
     status: sourceStatus(row.status),
@@ -618,29 +664,6 @@ function visibleContactEmail(email?: string) {
   return email
 }
 
-const coverImages = [
-  'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=900&q=80',
-  'https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=900&q=80',
-  'https://images.unsplash.com/photo-1531482615713-2afd69097998?auto=format&fit=crop&w=900&q=80',
-]
-
-const officialOpportunityImages = [
-  { keys: ['电子设计竞赛'], url: '/competition-covers/nuedc.png' },
-  { keys: ['蓝桥杯'], url: 'https://assets.lanqiao.cn/lanqiaobei-fe/v8.5.3/dist/favico.png' },
-  { keys: ['计算机设计大赛'], url: 'https://jsjds.blcu.edu.cn/images/banner11.PNG' },
-  { keys: ['数学建模'], url: 'https://www.mcm.edu.cn/theme/mcm/image/top_cn.jpg' },
-  { keys: ['嵌入式芯片'], url: '' },
-  { keys: ['集成电路'], url: 'https://univ.ciciec.com/favicon.ico' },
-  { keys: ['物联网'], url: 'https://iot.sjtu.edu.cn/favicon.ico' },
-  { keys: ['智能汽车'], url: 'https://www.smartcarrace.com/favicon.ico' },
-  { keys: ['RoboMaster', '机甲大师'], url: 'https://rm-static.djicdn.com/documents/55708/6d77a3be8b2431741835508145145792.png' },
-  { keys: ['华为 ICT'], url: 'https://r-h2.huaweistatic.com/s/hwtalent/lst/huawei.png' },
-  { keys: ['信息安全'], url: 'https://www.ciscn.cn/uploads/banner/2025-banner.jpg' },
-  { keys: ['创新大赛'], url: 'https://t4.chei.com.cn/ncss/student/img/gp-logo.png' },
-  { keys: ['挑战杯'], url: '' },
-  { keys: ['大创', '创新创业训练'], url: 'https://gjcxcy.bjtu.edu.cn/favicon.ico' },
-]
-
 const honorPresets = [
   { variant: 'honor-gold', brand: 'NCIETCC', type: 'CERTIFICATE', award: '一等奖', subject: '英语翻译挑战赛', date: '2026.01', seal: '荣誉证书' },
   { variant: 'honor-blue', brand: 'Bebras', type: 'PARTICIPATION', award: '优秀', subject: '信息思维挑战', date: '2023', seal: '思维挑战' },
@@ -651,11 +674,8 @@ const honorPresets = [
 
 function opportunityImage(item: Opportunity) {
   if (brokenOpportunityImages.value.has(item.id)) return ''
-  if (item.images?.length) return imgUrl(item.images[0])
-  const official = officialOpportunityImages.find(entry => entry.keys.some(key => item.title.includes(key)))
-  if (official) return official.url ? official.url : ''
-  if (item.source_type === 'notice') return coverImages[0]
-  return coverImages[item.id % coverImages.length]
+  const image = item.images?.find(Boolean)
+  return image ? imgUrl(image) : ''
 }
 
 function opportunityFallbackClass(item: Opportunity) {
@@ -669,6 +689,25 @@ function opportunityFallbackClass(item: Opportunity) {
 
 function opportunityFallbackTitle(item: Opportunity) {
   return item.title.replace('全国大学生', '全国大学生\n').replace('中国大学生', '中国大学生\n')
+}
+
+function opportunityFallbackKeyword(item: Opportunity) {
+  const title = item.title
+  const keywordRules = [
+    '物联网',
+    '数学建模',
+    '电子设计',
+    '计算机设计',
+    '蓝桥杯',
+    '挑战杯',
+    '智能汽车',
+    '信息安全',
+    '创新创业',
+    '学风建设',
+    '社会实践',
+    '助理招新',
+  ]
+  return keywordRules.find(key => title.includes(key)) || item.category || item.dimension_label
 }
 
 function markOpportunityImageBroken(item: Opportunity) {
@@ -711,10 +750,11 @@ function opportunityAttachments(item: Opportunity) {
 }
 
 async function loadCatalogExplorer() {
-  const [catalogData, userItems, submissions] = await Promise.all([
+  const [catalogData, userItems, submissions, basketItems] = await Promise.all([
     api<{ items: CatalogExplorerItem[]; filters: CatalogFilters }>('/catalog'),
     api<{ items: Array<{ catalog_item_id?: string }> }>('/user-items'),
     api<{ submissions: Array<{ catalog_item_id?: string; status: string }> }>('/submissions'),
+    api<BasketItem[]>('/plan-basket'),
   ])
   catalogItems.value = catalogData.items || []
   catalogFilters.value = catalogData.filters || { categories: [], levels: [], subcategories: [], sections: [] }
@@ -723,11 +763,19 @@ async function loadCatalogExplorer() {
     if (item.catalog_item_id) ids.add(item.catalog_item_id)
   }
   for (const item of submissions.submissions || []) {
-    if (item.catalog_item_id && ['pending', 'auto_approved', 'approved'].includes(item.status)) {
+    if (item.catalog_item_id && ['pending', 'needs_more', 'auto_approved', 'approved'].includes(item.status)) {
       ids.add(item.catalog_item_id)
     }
   }
+  const basketIds = new Set<string>()
+  for (const item of mergeBasketRows(basketItems || [])) {
+    const activityId = item.opportunity?.activity_id
+    if (typeof activityId === 'string' && activityId.startsWith('CAT-')) {
+      basketIds.add(activityId.slice(4))
+    }
+  }
   submittedCatalogIds.value = ids
+  basketCatalogIds.value = basketIds
 }
 
 function catalogCategoryClass(category: string) {
@@ -743,15 +791,109 @@ function catalogLevelClass(level: string) {
   return 'college'
 }
 
+function catalogBasketStorageKey() {
+  return `zongce-catalog-basket-${store.studentId}`
+}
+
+function basketIdentity(item: BasketItem) {
+  return String(item.opportunity?.activity_id || item.opportunity?.id || item.id)
+}
+
+function loadLocalCatalogBasket() {
+  try {
+    const raw = localStorage.getItem(catalogBasketStorageKey())
+    return raw ? JSON.parse(raw) as BasketItem[] : []
+  } catch {
+    return []
+  }
+}
+
+function saveLocalCatalogBasket(items: BasketItem[]) {
+  localStorage.setItem(catalogBasketStorageKey(), JSON.stringify(items))
+}
+
+function mergeBasketRows(remoteRows: BasketItem[], localRows = loadLocalCatalogBasket()) {
+  const rows = new Map<string, BasketItem>()
+  for (const item of remoteRows) rows.set(basketIdentity(item), item)
+  for (const item of localRows) {
+    const key = basketIdentity(item)
+    if (!rows.has(key)) rows.set(key, item)
+  }
+  return Array.from(rows.values())
+}
+
+function markOpportunitiesInBasket(items: Opportunity[], basketRows: BasketItem[]) {
+  const ids = new Set(basketRows.map(item => String(item.opportunity?.id)))
+  return items.map(item => ({
+    ...item,
+    in_basket: item.in_basket || ids.has(String(item.id)),
+  }))
+}
+
+function catalogItemToOpportunity(item: CatalogExplorerItem): Opportunity {
+  const dimension = item.category === 'sports' ? 'arts_sports' : item.category === 'moral' || item.category === 'academic' ? item.category : 'academic'
+  return {
+    id: `CAT-${item.id}`,
+    source_type: 'evergreen',
+    source_label: '星轨探索',
+    title: item.title,
+    category: item.section || item.category_name,
+    dimension,
+    dimension_label: item.category_name || dimensionDisplayName(dimension),
+    organizer: '综测细则目录',
+    location: '',
+    start_time: '',
+    deadline: '',
+    season_months: '',
+    credit_hint: item.description || `${item.level}项目，预计可加 ${item.score} 分`,
+    rule_ref: item.section || item.note || '',
+    official_url: '',
+    registration_url: '',
+    contact_email: '',
+    article_url: '',
+    group_qr_url: '',
+    description: item.description || item.title,
+    requirements: item.required_proofs?.map(proof => proof.name || proof.type).filter(Boolean) || [],
+    tags: [item.level, item.section].filter(Boolean),
+    attachments: [],
+    images: [],
+    roi_score: item.score,
+    in_basket: true,
+    activity_id: `CAT-${item.id}`,
+  }
+}
+
 async function addCatalogItem(item: CatalogExplorerItem) {
   try {
-    await postJson('/user-items', {
+    const identity = `CAT-${item.id}`
+    const fallbackRow: BasketItem = {
+      id: `local-${identity}`,
+      stage: '想参加',
+      note: '',
+      opportunity: catalogItemToOpportunity(item),
+    }
+    const created = await postJson<BasketItem>('/plan-basket', {
+      user_id: store.studentId,
       catalog_item_id: item.id,
-      source: 'manual',
+      title: item.title,
+      category: item.category,
+      category_name: item.category_name,
+      description: item.description,
+      level: item.level,
+      score: item.score,
+      section: item.section,
+      stage: '想参加',
     })
-    submittedCatalogIds.value = new Set([...submittedCatalogIds.value, item.id])
-    ElMessage.success(`已添加「${item.title}」到我的星轨`)
+    const row = created?.opportunity ? created : fallbackRow
+    const localRows = loadLocalCatalogBasket().filter(existing => basketIdentity(existing) !== identity)
+    saveLocalCatalogBasket([fallbackRow, ...localRows])
+    basketCatalogIds.value = new Set([...basketCatalogIds.value, item.id])
+    basket.value = mergeBasketRows([row, ...basket.value.filter(existing => basketIdentity(existing) !== identity)])
+    ElMessage.success(`已添加「${item.title}」到备赛清单`)
     await loadAll()
+    if (!basket.value.some(existing => basketIdentity(existing) === identity)) {
+      basket.value = mergeBasketRows([row, ...basket.value])
+    }
   } catch (error) {
     ElMessage.error((error as Error).message)
   }
@@ -888,8 +1030,8 @@ async function loadAll() {
       api<RuleDocument[]>('/rule-documents'),
     ])
     summary.value = summaryData
-    opportunities.value = opps
-    basket.value = basketData
+    basket.value = mergeBasketRows(basketData)
+    opportunities.value = markOpportunitiesInBasket(opps, basket.value)
     applications.value = (appData.submissions || []).map(mapSubmissionToApplication)
     honors.value = honorData
     templates.value = templateData
@@ -920,6 +1062,21 @@ async function loadAll() {
     ElMessage.error(`数据加载失败：${(error as Error).message}`)
   } finally {
     loading.value = false
+  }
+}
+
+async function clearExistingBasketOnce() {
+  const clearKey = `zongce-basket-cleared-after-catalog-fix-v2-${store.studentId}`
+  if (localStorage.getItem(clearKey) === '1') return
+  try {
+    const existing = await api<BasketItem[]>(`/plan-basket?user_id=${store.studentId}`)
+    await Promise.all(existing.map(item => api(`/plan-basket/${item.id}`, { method: 'DELETE' })))
+    saveLocalCatalogBasket([])
+    localStorage.setItem(clearKey, '1')
+  } catch (error) {
+    saveLocalCatalogBasket([])
+    localStorage.setItem(clearKey, '1')
+    ElMessage.error(`清空旧备赛清单失败：${(error as Error).message}`)
   }
 }
 
@@ -993,23 +1150,34 @@ watch(() => summary.value, () => nextTick(renderCharts))
 watch(activeStudentTab, tab => { if (tab === '星盘总览') nextTick(renderCharts) })
 
 async function addToBasket(opportunity: Opportunity) {
-  await postJson('/plan-basket', {
+  const row = await postJson<BasketItem>('/plan-basket', {
     user_id: store.studentId,
     opportunity_id: opportunity.id,
     stage: '想参加',
   })
+  opportunity.in_basket = true
+  basket.value = mergeBasketRows([row, ...basket.value])
   ElMessage.success('已加入备赛清单')
   await loadAll()
 }
 
 async function updateBasket(item: BasketItem) {
+  if (String(item.id).startsWith('local-')) {
+    const localRows = loadLocalCatalogBasket().map(row => basketIdentity(row) === basketIdentity(item) ? item : row)
+    saveLocalCatalogBasket(localRows)
+    ElMessage.success('备赛状态已更新')
+    return
+  }
   await patchJson(`/plan-basket/${item.id}`, { stage: item.stage, note: item.note })
   ElMessage.success('备赛状态已更新')
   await loadAll()
 }
 
 async function removeBasket(item: BasketItem) {
-  await api(`/plan-basket/${item.id}`, { method: 'DELETE' })
+  saveLocalCatalogBasket(loadLocalCatalogBasket().filter(row => basketIdentity(row) !== basketIdentity(item)))
+  if (!String(item.id).startsWith('local-')) {
+    await api(`/plan-basket/${item.id}`, { method: 'DELETE' })
+  }
   ElMessage.success('已移出备赛清单')
   await loadAll()
 }
@@ -1341,25 +1509,32 @@ function materialFileIcon(name: string) {
   return 'Image'
 }
 
-function handleMaterialSubmitFileSelect(event: Event) {
-  const input = event.target as HTMLInputElement
-  materialSelectedFiles.value = Array.from(input.files || []).filter(file => {
+function addMaterialSelectedFiles(files: File[]) {
+  const validFiles = files.filter(file => {
     const ext = file.name.split('.').pop()?.toLowerCase() || ''
     return ['jpg', 'jpeg', 'png', 'bmp', 'webp', 'gif', 'pdf', 'doc', 'docx'].includes(ext)
   })
+  const existingKeys = new Set(materialSelectedFiles.value.map(file => `${file.name}-${file.size}-${file.lastModified}`))
+  const appendFiles = validFiles.filter(file => !existingKeys.has(`${file.name}-${file.size}-${file.lastModified}`))
+  if (!appendFiles.length) {
+    if (files.length) ElMessage.info('选择的文件已在当前申报包中')
+    return
+  }
+  materialSelectedFiles.value = [...materialSelectedFiles.value, ...appendFiles]
   materialAnalysisResults.value = []
   materialServerFiles.value = []
+  materialSupplementFiles.value = {}
+}
+
+function handleMaterialSubmitFileSelect(event: Event) {
+  const input = event.target as HTMLInputElement
+  addMaterialSelectedFiles(Array.from(input.files || []))
   input.value = ''
 }
 
 function onMaterialSubmitDrop(event: DragEvent) {
   event.preventDefault()
-  materialSelectedFiles.value = Array.from(event.dataTransfer?.files || []).filter(file => {
-    const ext = file.name.split('.').pop()?.toLowerCase() || ''
-    return ['jpg', 'jpeg', 'png', 'bmp', 'webp', 'gif', 'pdf', 'doc', 'docx'].includes(ext)
-  })
-  materialAnalysisResults.value = []
-  materialServerFiles.value = []
+  addMaterialSelectedFiles(Array.from(event.dataTransfer?.files || []))
 }
 
 function removeMaterialSelectedFile(index: number) {
@@ -1367,9 +1542,257 @@ function removeMaterialSelectedFile(index: number) {
 }
 
 function matchConfidenceClass(value: number) {
-  if (value >= 80) return 'conf-high'
-  if (value >= 40) return 'conf-medium'
+  if (value >= 95) return 'conf-high'
+  if (value >= 60) return 'conf-medium'
   return 'conf-low'
+}
+
+function auditLightLabel(match: AnalyzeMatch) {
+  const missingCount = match.audit?.missing_fields?.length || 0
+  if (match.confidence >= 95 && missingCount === 0) return '绿灯高置信'
+  if (match.confidence >= 60) return missingCount ? '需补充佐证' : '黄灯待复核'
+  return '红灯高风险'
+}
+
+function auditLightClass(match: AnalyzeMatch) {
+  if (match.confidence >= 95 && !(match.audit?.missing_fields?.length)) return 'audit-light-green'
+  if (match.confidence >= 60) return 'audit-light-amber'
+  return 'audit-light-red'
+}
+
+function auditFeatureValue(match: AnalyzeMatch, key: string, fallback = '未识别') {
+  const value = match.audit?.extracted_features?.[key]
+  if (typeof value === 'boolean') return value ? '是' : '否'
+  return value || fallback
+}
+
+function ensureAudit(match: AnalyzeMatch) {
+  if (!match.audit) match.audit = {}
+  if (!match.audit.extracted_features) match.audit.extracted_features = {}
+  if (!match.audit.missing_fields) match.audit.missing_fields = []
+  if (!match.audit.risk_assessment) match.audit.risk_assessment = { risk_tags: [] }
+  if (!match.audit.audit_chain) match.audit.audit_chain = []
+  return match.audit
+}
+
+const manualAuditRepairs: Record<string, { missing: string[], risks: string[] }> = {
+  detected_name: { missing: ['identity_match_proof'], risks: ['IDENTITY_UNCLEAR', 'NAME_MISMATCH'] },
+  event_name: { missing: ['event_name', 'event_name_proof'], risks: ['EVENT_UNCLEAR'] },
+  award_level: { missing: ['award_level_proof'], risks: ['AWARD_LEVEL_UNCLEAR'] },
+  date: { missing: ['date_proof'], risks: ['DATE_UNCLEAR'] },
+}
+
+function recalculateManualAuditConfidence(match: AnalyzeMatch) {
+  const audit = ensureAudit(match)
+  const meta = audit as typeof audit & { manual_baseline_confidence?: number, manual_edited?: boolean }
+  if (!Number.isFinite(meta.manual_baseline_confidence)) {
+    meta.manual_baseline_confidence = Number.isFinite(match.confidence) ? match.confidence : (audit.confidence_score || 0)
+  }
+
+  const features = audit.extracted_features || {}
+  let missingFields = audit.missing_fields || []
+  let riskTags = audit.risk_assessment?.risk_tags || []
+  const coreKeys = ['detected_name', 'event_name', 'award_level', 'date']
+  const completedCore = coreKeys.filter(key => String(features[key] || '').trim()).length
+
+  for (const key of coreKeys) {
+    if (!String(features[key] || '').trim()) continue
+    const repair = manualAuditRepairs[key]
+    if (!repair) continue
+    missingFields = missingFields.filter(field => !repair.missing.includes(field.field_key))
+    riskTags = riskTags.filter(tag => !repair.risks.includes(tag))
+  }
+
+  audit.missing_fields = missingFields
+  audit.risk_assessment!.risk_tags = Array.from(new Set(riskTags))
+
+  const unresolvedCount = audit.missing_fields.length + audit.risk_assessment!.risk_tags.length
+  const baseline = Math.max(0, Math.min(meta.manual_baseline_confidence || 0, 88))
+  const evidenceCap = meta.manual_edited ? 90 : 95
+  const completenessCap = completedCore >= 4
+    ? evidenceCap
+    : completedCore === 3
+      ? 86
+      : completedCore === 2
+        ? 80
+        : 72
+  const nextConfidence = Math.max(
+    5,
+    Math.min(completenessCap, baseline + completedCore * 4 - unresolvedCount * 3),
+  )
+
+  match.confidence = Number(nextConfidence.toFixed(1))
+  audit.confidence_score = match.confidence
+  match.decision = match.confidence >= 95 && unresolvedCount === 0 ? 'high' : (match.confidence >= 60 ? 'medium' : 'low')
+  audit.status = match.decision === 'high'
+    ? 'HIGH_CONFIDENCE'
+    : (match.confidence >= 60 ? (audit.missing_fields.length ? 'NEED_SUPPLEMENT' : 'PENDING_HUMAN') : 'HIGH_RISK')
+  audit.audit_chain = [
+    ...(audit.audit_chain || []).filter(step => !step.startsWith('学生补全字段后重算置信度')),
+    `学生补全字段后重算置信度为 ${match.confidence.toFixed(1)}%。`,
+  ]
+}
+
+function setAuditFeature(match: AnalyzeMatch, key: string, event: Event) {
+  const input = event.target as HTMLInputElement
+  const audit = ensureAudit(match)
+  audit.extracted_features![key] = input.value.trim()
+  ;(audit as typeof audit & { manual_edited?: boolean }).manual_edited = true
+  recalculateManualAuditConfidence(match)
+}
+
+function fallbackAuditFromText(result: AnalyzeResult, match: AnalyzeMatch) {
+  const audit = ensureAudit(match)
+  const text = `${result.filename}\n${result.extracted_text || ''}`
+  if (!audit.extracted_features!.detected_name) {
+    const foundName = text.match(/姓名\s*([\u4e00-\u9fa5]{2,4})(?=\d|身份证|证件|Name|参加|$)/)
+      || text.match(/姓\s*名\s*([\u4e00-\u9fa5]{2,4})(?=\d|身份证|证件|Name|参加|$)/)
+    if (foundName?.[1]) audit.extracted_features!.detected_name = foundName[1]
+  }
+  if (!audit.extracted_features!.date) {
+    const foundDate = text.match(/(202\d\s*(?:年|[-./]|\s)\s*(?:0?[1-9]|1[0-2])\s*月?)/)
+    if (foundDate?.[1]) audit.extracted_features!.date = foundDate[1].replace(/\s+/g, ' ').trim()
+  }
+}
+
+function auditRiskTags(match: AnalyzeMatch) {
+  return match.audit?.risk_assessment?.risk_tags || []
+}
+
+function supplementKey(result: AnalyzeResult, match: AnalyzeMatch, fieldKey: string) {
+  return `${result.file_id}-${match.id}-${fieldKey}`
+}
+
+async function handleSupplementSelect(event: Event, result: AnalyzeResult, match: AnalyzeMatch, fieldKey: string) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  const key = supplementKey(result, match, fieldKey)
+  try {
+    const uploaded = await uploadSingleFile(file, fieldKey)
+    materialSupplementFiles.value = {
+      ...materialSupplementFiles.value,
+      [key]: { id: uploaded.id, name: uploaded.filename, url: uploaded.url, type: uploaded.type, proofType: fieldKey },
+    }
+    const audit = ensureAudit(match)
+    audit.missing_fields = (audit.missing_fields || []).filter(field => field.field_key !== fieldKey)
+    if (fieldKey === 'identity_match_proof') {
+      audit.risk_assessment!.risk_tags = (audit.risk_assessment!.risk_tags || []).filter(tag => tag !== 'IDENTITY_UNCLEAR')
+    }
+    audit.audit_chain!.push(`补充材料已加入申报包：${uploaded.filename}`)
+    recalculateManualAuditConfidence(match)
+    ElMessage.success('补充材料已加入本次申报包')
+  } catch (error) {
+    ElMessage.error((error as Error).message)
+  } finally {
+    input.value = ''
+  }
+}
+
+async function reanalyzeWithSupplements(result: AnalyzeResult, match: AnalyzeMatch) {
+  const baseIds = materialServerFiles.value.map(file => file.id).filter(Boolean) as number[]
+  const supplementIds = matchSupplementFiles(result, match).map(file => file.id).filter(Boolean) as number[]
+  const uploadedFileIds = Array.from(new Set([...baseIds, ...supplementIds]))
+  if (!uploadedFileIds.length) {
+    ElMessage.warning('暂无可重新分析的材料')
+    return
+  }
+  materialParsing.value = true
+  try {
+    const analysis = await api<{ results: AnalyzeResult[] }>('/analyze', {
+      method: 'POST',
+      body: JSON.stringify({
+        uploaded_file_ids: uploadedFileIds,
+        keyword: `${materialExtraKeyword.value} ${match.title}`.trim(),
+      }),
+    })
+    const refreshed = (analysis.results || [])
+      .flatMap(item => item.matches || [])
+      .find(item => item.id === match.id)
+    if (!refreshed) {
+      ElMessage.warning('重新分析完成，但未找到同一综测项目匹配')
+      return
+    }
+    match.confidence = refreshed.confidence
+    match.decision = refreshed.decision
+    match.reason = refreshed.reason
+    match.audit = refreshed.audit || match.audit
+    fallbackAuditFromText(result, match)
+    ElMessage.success('已用补充材料刷新 AI 结构化结果')
+  } catch (error) {
+    ElMessage.error(`重新分析失败：${(error as Error).message}`)
+  } finally {
+    materialParsing.value = false
+  }
+}
+
+function matchSupplementFiles(result: AnalyzeResult, match: AnalyzeMatch) {
+  return (match.audit?.missing_fields || [])
+    .map(field => materialSupplementFiles.value[supplementKey(result, match, field.field_key)])
+    .filter(Boolean) as UploadedFile[]
+}
+
+function mergeAuditPayload(base: AuditPayload = {}, incoming: AuditPayload = {}) {
+  const merged: AuditPayload = {
+    ...base,
+    extracted_features: { ...(base.extracted_features || {}) },
+    risk_assessment: {
+      ...(base.risk_assessment || {}),
+      risk_tags: [...(base.risk_assessment?.risk_tags || [])],
+    },
+    missing_fields: [...(base.missing_fields || [])],
+    audit_chain: [...(base.audit_chain || [])],
+  }
+  Object.entries(incoming.extracted_features || {}).forEach(([key, value]) => {
+    if (value && !merged.extracted_features?.[key]) merged.extracted_features![key] = value
+  })
+  const tags = new Set([...(merged.risk_assessment?.risk_tags || []), ...(incoming.risk_assessment?.risk_tags || [])])
+  merged.risk_assessment!.risk_tags = [...tags]
+  const missingMap = new Map((merged.missing_fields || []).map(field => [field.field_key, field]))
+  ;(incoming.missing_fields || []).forEach(field => {
+    if (!missingMap.has(field.field_key)) missingMap.set(field.field_key, field)
+  })
+  const features = merged.extracted_features || {}
+  if (features.detected_name) missingMap.delete('identity_match_proof')
+  if (features.date) missingMap.delete('date')
+  if (features.event_name) missingMap.delete('event_name')
+  merged.missing_fields = [...missingMap.values()]
+  merged.audit_chain = [...new Set([...(merged.audit_chain || []), ...(incoming.audit_chain || [])])]
+  return merged
+}
+
+function mergePackageAnalysisResults(results: AnalyzeResult[]) {
+  if (results.length <= 1) return results
+  const matchMap = new Map<string, AnalyzeMatch>()
+  results.forEach(result => {
+    result.matches.forEach(match => {
+      fallbackAuditFromText(result, match)
+      const existing = matchMap.get(match.id)
+      const audit = mergeAuditPayload(match.audit || {}, {
+        audit_chain: [`材料包包含文件：${result.filename}`],
+      })
+      if (!existing) {
+        matchMap.set(match.id, { ...match, audit })
+        return
+      }
+      const current = { ...match, audit }
+      const stronger = current.confidence > existing.confidence ? current : existing
+      const weaker = current.confidence > existing.confidence ? existing : current
+      matchMap.set(match.id, {
+        ...stronger,
+        confidence: Math.max(existing.confidence, match.confidence),
+        reason: [stronger.reason, weaker.reason].filter(Boolean).join('；'),
+        audit: mergeAuditPayload(stronger.audit || {}, weaker.audit || {}),
+      })
+    })
+  })
+  return [{
+    file_id: materialServerFiles.value[0]?.id || 0,
+    filename: `申报材料包（${results.length}份）：${results.map(item => item.filename).join('、')}`,
+    extracted_text: results.map(item => item.extracted_text || '').filter(Boolean).join('\n\n'),
+    has_text_content: results.some(item => item.has_text_content),
+    matches: [...matchMap.values()].sort((a, b) => b.confidence - a.confidence),
+  }]
 }
 
 async function uploadAndAnalyzeMaterials() {
@@ -1398,7 +1821,12 @@ async function uploadAndAnalyzeMaterials() {
         keyword: materialExtraKeyword.value.trim(),
       }),
     })
-    materialAnalysisResults.value = analysis.results || []
+    const rawResults = analysis.results || []
+    rawResults.forEach(result => {
+      result.matches.forEach(match => fallbackAuditFromText(result, match))
+    })
+    materialAnalysisResults.value = mergePackageAnalysisResults(rawResults)
+    materialSupplementFiles.value = {}
     ElMessage.success(`AI分析完成，共匹配 ${materialAnalysisResults.value.reduce((sum, item) => sum + item.matches.length, 0)} 个综测项目`)
   } catch (error) {
     ElMessage.error(`AI分析失败：${(error as Error).message}`)
@@ -1409,17 +1837,21 @@ async function uploadAndAnalyzeMaterials() {
 
 async function submitMatchedMaterial(result: AnalyzeResult, match: AnalyzeMatch) {
   try {
-    const response = await postJson<{ status: string; proofs_complete?: boolean }>('/submissions', {
+    const packageFileIds = materialServerFiles.value.map(file => file.id).filter(Boolean) as number[]
+    const supplementIds = matchSupplementFiles(result, match).map(file => file.id).filter(Boolean) as number[]
+    const uploadedFileIds = Array.from(new Set([...(packageFileIds.length ? packageFileIds : [result.file_id]), ...supplementIds]))
+    const response = await postJson<{ status: string; proofs_complete?: boolean; submission_id?: number }>('/submissions', {
       catalog_item_id: match.id,
-      uploaded_file_ids: [result.file_id],
+      uploaded_file_ids: uploadedFileIds,
       ai_confidence: match.confidence,
       ai_decision: match.decision || (match.confidence >= 80 ? 'high' : 'medium'),
       ai_reason: match.reason || '',
+      ai_audit: match.audit || {},
     })
     materialAddedItems.value.push({
       id: match.id,
-      fileId: result.file_id,
-      filename: result.filename,
+      fileId: result.file_id || 0,
+      filename: packageFileIds.length > 1 ? `${packageFileIds.length} 份材料组合包` : result.filename,
       title: match.title,
       category: match.category,
       category_name: match.category_name,
@@ -1428,7 +1860,7 @@ async function submitMatchedMaterial(result: AnalyzeResult, match: AnalyzeMatch)
       confidence: match.confidence,
       status: response.status,
     })
-    ElMessage.success(response.status === 'auto_approved' ? 'AI自动通过，已写入我的星轨' : '已提交审核，管理端会收到这条材料')
+    ElMessage.success(response.status === 'needs_more' ? '已提交审核，系统已标记需补充佐证' : '已提交审核，等待管理端终审')
     await loadAll()
   } catch (error) {
     ElMessage.error((error as Error).message)
@@ -1467,48 +1899,149 @@ async function handleTargetProofSelect(event: Event, proofType: string) {
     input.value = ''
   }
 }
+void selectTargetCatalogItem
+void handleTargetProofSelect
+
+async function handleTargetManualFileSelect(event: Event) {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files || []).filter(file => {
+    const ext = file.name.split('.').pop()?.toLowerCase() || ''
+    return ['jpg', 'jpeg', 'png', 'bmp', 'webp', 'gif', 'pdf', 'doc', 'docx'].includes(ext)
+  })
+  if (!files.length) return
+  materialParsing.value = true
+  try {
+    for (const file of files) {
+      const uploaded = await uploadSingleFile(file, 'manual_proof')
+      targetManualFiles.value.push({
+        id: uploaded.id,
+        name: uploaded.filename,
+        url: uploaded.url,
+        type: uploaded.type,
+        proofType: 'manual_proof',
+      })
+    }
+    ElMessage.success('材料已上传')
+  } catch (error) {
+    ElMessage.error((error as Error).message)
+  } finally {
+    materialParsing.value = false
+    input.value = ''
+  }
+}
+
+function removeTargetManualFile(index: number) {
+  targetManualFiles.value.splice(index, 1)
+}
 
 async function submitTargetedMaterial() {
-  if (!selectedTargetItem.value) {
-    ElMessage.warning('请先选择综测项目')
+  if (!targetManualForm.title.trim()) {
+    ElMessage.warning('请填写加分项目名称')
     return
   }
-  const uploadedIds = Object.values(targetProofFiles.value).filter(Boolean).map(file => file?.id).filter(Boolean) as number[]
+  if (!targetManualForm.level) {
+    ElMessage.warning('请选择加分级别')
+    return
+  }
+  const uploadedIds = targetManualFiles.value.map(file => file.id).filter(Boolean) as number[]
   if (!uploadedIds.length) {
-    ElMessage.warning('请至少上传一份证明材料')
+    ElMessage.warning('请至少上传一份加分材料证明')
     return
   }
   materialParsing.value = true
   try {
-    let aiConfidence = 60
-    let aiDecision = 'medium'
-    let aiReason = ''
+    const aiConfidence = 55
+    const aiDecision = 'medium'
+    const aiReason = '学生定向手动填写申报信息，需管理员按材料原件复核。'
+    const scoreValue = Number(targetManualForm.score || 0)
+    const aiAudit: AuditPayload = {
+      status: 'MANUAL_REVIEW',
+      confidence_score: aiConfidence,
+      matched_regulation: {
+        section: '手动定向提交',
+        clause_text: targetManualForm.description.trim() || '学生手动填写加分项目，等待人工核验。',
+        score_calculated: scoreValue,
+      },
+      extracted_features: {
+        event_name: targetManualForm.title.trim(),
+        award_level: targetManualForm.level,
+        date: targetManualForm.completion_date,
+        material_count: targetManualFiles.value.length,
+      },
+      risk_assessment: {
+        risk_tags: ['MANUAL_TARGETED_SUBMISSION'],
+        risk_description: '该材料未绑定既有综测目录，需管理员核验项目名称、级别、分值和证明材料。',
+      },
+      missing_fields: [],
+      audit_chain: [
+        `学生手动填写加分项目：${targetManualForm.title.trim()}`,
+        `选择加分级别：${targetManualForm.level}`,
+        `上传证明材料 ${targetManualFiles.value.length} 份`,
+        '进入管理端审核队列，管理员通过后才写入综测得分',
+      ],
+    }
     const verify = await api<{ results: AnalyzeResult[] }>('/analyze', {
       method: 'POST',
       body: JSON.stringify({
         uploaded_file_ids: uploadedIds,
-        keyword: selectedTargetItem.value.title,
+        keyword: `${targetManualForm.title} ${targetManualForm.level}`.trim(),
       }),
     })
-    for (const result of verify.results || []) {
-      for (const match of result.matches || []) {
-        if (match.id === selectedTargetItem.value.id && match.confidence > aiConfidence) {
-          aiConfidence = match.confidence
-          aiReason = match.reason || ''
-        }
+    const bestMatch = (verify.results || [])
+      .flatMap(result => result.matches || [])
+      .sort((a, b) => b.confidence - a.confidence)[0]
+    if (bestMatch?.audit?.extracted_features) {
+      aiAudit.extracted_features = {
+        ...aiAudit.extracted_features,
+        ...bestMatch.audit.extracted_features,
+        event_name: targetManualForm.title.trim(),
+        award_level: targetManualForm.level,
       }
     }
-    aiDecision = aiConfidence >= 80 ? 'high' : aiConfidence >= 40 ? 'medium' : 'low'
-    const response = await postJson<{ status: string; proofs_complete?: boolean }>('/submissions', {
-      catalog_item_id: selectedTargetItem.value.id,
+    if (bestMatch?.audit?.risk_assessment?.risk_tags?.length) {
+      aiAudit.risk_assessment!.risk_tags = [
+        ...new Set([...(aiAudit.risk_assessment!.risk_tags || []), ...bestMatch.audit.risk_assessment.risk_tags]),
+      ]
+    }
+    if (bestMatch?.confidence) {
+      aiAudit.audit_chain!.push(`AI 参考匹配：${bestMatch.title}，置信度 ${bestMatch.confidence.toFixed(1)}%`)
+    }
+    const response = await postJson<{ status: string; proofs_complete?: boolean; submission_id?: number }>('/submissions', {
       uploaded_file_ids: uploadedIds,
-      completion_date: targetCompletionDate.value,
+      completion_date: targetManualForm.completion_date,
+      manual_title: targetManualForm.title.trim(),
+      manual_category: targetManualForm.category,
+      manual_level: targetManualForm.level,
+      manual_score: scoreValue,
+      manual_description: targetManualForm.description.trim(),
       ai_confidence: aiConfidence,
       ai_decision: aiDecision,
       ai_reason: aiReason,
+      ai_audit: aiAudit,
     })
-    targetAiVerifyResult.value = `AI置信度 ${aiConfidence.toFixed(1)}%，${response.status === 'auto_approved' ? '已自动通过' : '已进入管理端待审核'}`
-    ElMessage.success(response.status === 'auto_approved' ? 'AI自动通过，已写入我的星轨' : '已提交审核，管理端会收到这条材料')
+    targetAiVerifyResult.value = response.status === 'needs_more' ? '已提交，当前标记为需补材料' : '已提交到管理端审核队列'
+    materialAddedItems.value.push({
+      id: `manual-${response.submission_id || Date.now()}`,
+      fileId: uploadedIds[0] || 0,
+      filename: targetManualFiles.value.map(file => file.name).join('、'),
+      title: targetManualForm.title.trim(),
+      category: targetManualForm.category,
+      category_name: targetManualForm.category === 'moral' ? '品德行为' : targetManualForm.category === 'sports' ? '文体表现' : '学业表现',
+      level: targetManualForm.level,
+      score: scoreValue,
+      confidence: aiConfidence,
+      status: response.status,
+    })
+    ElMessage.success('已提交审核，等待管理端终审')
+    Object.assign(targetManualForm, {
+      title: '',
+      category: 'academic',
+      level: '',
+      score: '',
+      description: '',
+      completion_date: '',
+    })
+    targetManualFiles.value = []
     await loadAll()
   } catch (error) {
     ElMessage.error((error as Error).message)
@@ -1518,39 +2051,41 @@ async function submitTargetedMaterial() {
 }
 
 async function loadAdminQueue() {
-  const statusMap: Record<string, string> = {
-    high_confidence: '',
-    needs_more: 'pending',
-    risk: 'pending',
-    approved: 'approved',
-    rejected: 'rejected',
-  }
-  const status = statusMap[auditQueue.value] ?? auditQueue.value
-  const data = await api<{ submissions: any[] }>(`/admin/submissions?per_page=200${status ? `&status=${status}` : ''}`)
+  const data = await api<{ submissions: any[] }>(`/admin/submissions?per_page=200${auditQueue.value ? `&queue=${auditQueue.value}` : ''}`)
   let rows = (data.submissions || []).map(mapSubmissionToApplication)
   if (auditQueue.value === 'high_confidence') rows = rows.filter(item => item.ai_confidence >= 0.85 && item.status === 'pending_human')
   if (auditQueue.value === 'risk') rows = rows.filter(item => item.ai_confidence < 0.7 || item.status === 'needs_more')
-  if (auditQueue.value === 'needs_more') rows = rows.filter(item => item.status === 'pending_human' && item.ai_confidence < 0.85)
   adminApplications.value = orderAuditRows(rows)
 }
 
-async function decide(app: ApplicationItem, decision: 'approved' | 'rejected' | 'needs_more') {
+async function decide(app: ApplicationItem, decision: 'approved' | 'rejected' | 'needs_more' | 'return') {
   const score = decision === 'approved' ? Number(app.suggested_score || 0) : undefined
+  const action = decision === 'approved' ? 'approve' : decision
+  const comment = decision === 'approved'
+    ? '人工复核通过，写入综测流水。'
+    : decision === 'needs_more'
+      ? '请补齐学校/学院通知、参赛名单或官方结果证明。'
+      : decision === 'return'
+        ? '重新打回，需补充材料后复核；如已入账则撤销该提交对应加分。'
+        : '材料与细则不匹配，驳回。'
   await api(`/admin/submissions/${app.id}`, {
     method: 'PUT',
     body: JSON.stringify({
-    action: decision === 'approved' ? 'approve' : 'reject',
-    score,
-    comment: decision === 'approved' ? '人工复核通过，写入综测流水。' : decision === 'needs_more' ? '请补齐学校/学院通知、参赛名单或官方结果证明。' : '材料与细则不匹配，驳回。',
-    remarks: decision === 'approved' ? '人工复核通过，写入综测流水。' : decision === 'needs_more' ? '请补齐学校/学院通知、参赛名单或官方结果证明。' : '材料与细则不匹配，驳回。',
-    rule_ref: app.ai_review?.rule_ref || '',
+      action,
+      score,
+      comment,
+      remarks: comment,
+      rule_ref: app.ai_review?.rule_ref || '',
     }),
   })
-  ElMessage.success('审核结果已保存')
+  ElMessage.success(decision === 'return' ? '已重新打回，等待学生补充材料' : '审核结果已保存')
   await loadAll()
 }
 
-onMounted(loadAll)
+onMounted(async () => {
+  await clearExistingBasketOnce()
+  await loadAll()
+})
 </script>
 
 <template>
@@ -1674,7 +2209,7 @@ onMounted(loadAll)
               v-for="item in filteredCatalogItems"
               :key="item.id"
               class="catalog-explorer-card"
-              :class="{ selected: submittedCatalogIds.has(item.id) }"
+              :class="{ selected: submittedCatalogIds.has(item.id) || basketCatalogIds.has(item.id) }"
             >
               <div class="catalog-card-top">
                 <span class="catalog-icon-box">{{ item.icon?.includes('trophy') ? '♜' : item.icon?.includes('heart') ? '♥' : item.icon?.includes('book') ? '▮' : '♟' }}</span>
@@ -1692,7 +2227,8 @@ onMounted(loadAll)
               <div v-if="item.note" class="catalog-note-line">ⓘ {{ item.note }}</div>
               <div class="catalog-card-actions">
                 <span v-if="submittedCatalogIds.has(item.id)" class="catalog-submitted">已提交/已通过</span>
-                <button v-else class="btn-primary-sm" @click="addCatalogItem(item)">+ 添加</button>
+                <span v-else-if="basketCatalogIds.has(item.id)" class="catalog-submitted">已添加</span>
+                <button v-else class="btn-primary-sm" @click="addCatalogItem(item)">+ 添加备赛清单</button>
               </div>
             </article>
           </div>
@@ -1845,10 +2381,10 @@ onMounted(loadAll)
                   @error="markOpportunityImageBroken(item)"
                 />
                 <div v-else :class="['opportunity-image-fallback', opportunityFallbackClass(item)]">
-                  <span>{{ item.category }}</span>
+                  <span>{{ opportunityFallbackKeyword(item) }}</span>
                   <strong>{{ opportunityFallbackTitle(item) }}</strong>
                 </div>
-                <span class="image-tag">{{ item.category }}</span>
+                <span class="image-tag">{{ opportunityImage(item) ? item.category : opportunityFallbackKeyword(item) }}</span>
               </div>
               <div class="card-body">
                 <div class="card-meta">
@@ -1862,7 +2398,7 @@ onMounted(loadAll)
                   <div>
                     <button class="btn-text" @click="selectedOpportunity = item">详情</button>
                     <button class="btn-primary-sm" :disabled="item.in_basket" @click="addToBasket(item)">
-                      {{ item.in_basket ? '已加入' : '加入备赛清单' }}
+                      {{ item.in_basket ? '已添加' : '添加备赛清单' }}
                     </button>
                   </div>
                 </div>
@@ -1872,8 +2408,11 @@ onMounted(loadAll)
         </section>
 
         <section v-show="activeStudentTab === '备赛清单'" class="page-stack">
-          <article v-for="item in basket" :key="item.id" class="basket-row">
-            <img :src="opportunityImage(item.opportunity)" alt="" />
+          <article v-for="item in basket" :key="basketIdentity(item)" class="basket-row">
+            <img v-if="opportunityImage(item.opportunity)" :src="opportunityImage(item.opportunity)" alt="" />
+            <div v-else :class="['basket-image-fallback', opportunityFallbackClass(item.opportunity)]">
+              <span>{{ opportunityFallbackKeyword(item.opportunity) }}</span>
+            </div>
             <div>
               <span class="source">{{ item.opportunity.category }}</span>
               <h3>{{ item.opportunity.title }}</h3>
@@ -1883,7 +2422,10 @@ onMounted(loadAll)
               <el-option v-for="stage in ['想参加', '已报名', '备赛中', '材料待提交', '已结算']" :key="stage" :label="stage" :value="stage" />
             </el-select>
             <el-input v-model="item.note" placeholder="备赛备注" @change="updateBasket(item)" />
-            <el-button text type="danger" @click="removeBasket(item)">移出</el-button>
+            <div class="basket-actions">
+              <button class="btn-text" @click="selectedOpportunity = item.opportunity">详情</button>
+              <el-button text type="danger" @click="removeBasket(item)">移出</el-button>
+            </div>
           </article>
           <el-empty v-if="!basket.length" description="还没有加入备赛清单" />
         </section>
@@ -1942,19 +2484,67 @@ onMounted(loadAll)
                     {{ result.has_text_content ? result.extracted_text.slice(0, 150) : '未能从文件中提取文字，基于文件名和关键词匹配。' }}
                   </p>
                   <div v-for="match in result.matches" :key="`${result.file_id}-${match.id}`" class="source-match-card">
-                    <div>
-                      <strong>{{ match.title }}</strong>
+                    <div class="source-match-main">
+                      <div class="audit-card-title">
+                        <strong>{{ match.title }}</strong>
+                        <span :class="['audit-light-pill', auditLightClass(match)]">{{ auditLightLabel(match) }}</span>
+                      </div>
                       <p>{{ match.description }}</p>
                       <div class="source-match-badges">
                         <span>{{ match.category_name || match.category }}</span>
                         <span>{{ match.level }}</span>
                         <span>+{{ match.score }}分</span>
+                        <span v-if="match.audit?.matched_regulation?.section">{{ match.audit.matched_regulation.section }}</span>
                       </div>
+                      <div class="audit-structured-grid">
+                        <label>
+                          <span>姓名</span>
+                          <input :value="auditFeatureValue(match, 'detected_name', '')" placeholder="手动填写姓名" @input="event => setAuditFeature(match, 'detected_name', event)" />
+                        </label>
+                        <label>
+                          <span>活动/证书</span>
+                          <input :value="auditFeatureValue(match, 'event_name', match.title)" placeholder="手动填写活动或证书名称" @input="event => setAuditFeature(match, 'event_name', event)" />
+                        </label>
+                        <label>
+                          <span>等级</span>
+                          <input :value="auditFeatureValue(match, 'award_level', match.level || '')" placeholder="手动填写等级" @input="event => setAuditFeature(match, 'award_level', event)" />
+                        </label>
+                        <label>
+                          <span>日期</span>
+                          <input :value="auditFeatureValue(match, 'date', '')" placeholder="手动填写日期" @input="event => setAuditFeature(match, 'date', event)" />
+                        </label>
+                      </div>
+                      <div v-if="auditRiskTags(match).length" class="audit-risk-tags">
+                        <span v-for="tag in auditRiskTags(match)" :key="tag">{{ tag }}</span>
+                      </div>
+                      <div v-if="match.audit?.missing_fields?.length" class="audit-missing-box">
+                        <b>需补充佐证</b>
+                        <div v-for="field in match.audit.missing_fields" :key="field.field_key">
+                          <strong>{{ field.field_name }}</strong>
+                          <small>{{ field.guidance_tips }}</small>
+                          <label class="audit-supplement-upload">
+                            <input type="file" accept=".jpg,.jpeg,.png,.bmp,.webp,.pdf,.doc,.docx" @change="event => handleSupplementSelect(event, result, match, field.field_key)" />
+                            <span>{{ materialSupplementFiles[supplementKey(result, match, field.field_key)]?.name || '上传补充材料' }}</span>
+                          </label>
+                        </div>
+                        <button class="audit-reanalyze-btn" :disabled="materialParsing" @click="reanalyzeWithSupplements(result, match)">
+                          {{ materialParsing ? '重新分析中...' : '用补充材料重新分析' }}
+                        </button>
+                      </div>
+                      <div v-if="matchSupplementFiles(result, match).length" class="audit-supplement-summary">
+                        <strong>已补充 {{ matchSupplementFiles(result, match).length }} 份材料</strong>
+                        <button class="audit-reanalyze-btn" :disabled="materialParsing" @click="reanalyzeWithSupplements(result, match)">
+                          {{ materialParsing ? '重新分析中...' : '刷新上方识别结果' }}
+                        </button>
+                      </div>
+                      <ol v-if="match.audit?.audit_chain?.length" class="audit-chain-list">
+                        <li v-for="step in match.audit.audit_chain" :key="step">{{ step }}</li>
+                      </ol>
                     </div>
                     <div class="source-confidence">
                       <span :class="matchConfidenceClass(match.confidence)">{{ match.confidence.toFixed(1) }}%</span>
                       <button class="source-primary-small" :disabled="isMaterialAdded(result, match)" @click="submitMatchedMaterial(result, match)">
-                        {{ isMaterialAdded(result, match) ? '已提交' : '提交审核' }}
+                        {{ isMaterialAdded(result, match) ? '已提交' : '提交整组审核' }}
                       </button>
                     </div>
                   </div>
@@ -1964,70 +2554,68 @@ onMounted(loadAll)
           </div>
 
           <div v-else class="targeted-submit-grid">
-            <div class="source-card">
-              <header>选择综测项目</header>
-              <div class="target-filters">
-                <select v-model="targetCatalogQuery.category">
-                  <option value="">全部板块</option>
-                  <option value="moral">品德行为</option>
-                  <option value="academic">学业表现</option>
-                  <option value="sports">文体表现</option>
-                </select>
-                <select v-model="targetCatalogQuery.level">
-                  <option value="">全部级别</option>
-                  <option value="国家级">国家级</option>
-                  <option value="省级">省级</option>
-                  <option value="校级">校级</option>
-                  <option value="院级">院级</option>
-                  <option value="班级">班级</option>
-                </select>
-                <input v-model="targetCatalogQuery.keyword" placeholder="输入项目名称关键词搜索..." />
-              </div>
-              <div class="target-results">
-                <article
-                  v-for="item in filteredTargetCatalogItems"
-                  :key="item.id"
-                  :class="['target-catalog-card', { active: selectedTargetItem?.id === item.id }]"
-                  @click="selectTargetCatalogItem(item)"
-                >
-                  <strong>{{ item.title }}</strong>
-                  <p>{{ item.description }}</p>
-                  <span>{{ item.category_name }}</span>
-                  <span>{{ item.level }}</span>
-                  <b>+{{ item.score }}分</b>
-                </article>
+            <div class="source-card targeted-manual-card">
+              <header>填写加分资料</header>
+              <div class="manual-target-form">
+                <label class="manual-field wide">
+                  <span>加分项目名称</span>
+                  <input v-model="targetManualForm.title" placeholder="如：全国大学生物联网设计竞赛省级一等奖" />
+                </label>
+                <label class="manual-field">
+                  <span>综测板块</span>
+                  <select v-model="targetManualForm.category">
+                    <option value="moral">品德行为</option>
+                    <option value="academic">学业表现</option>
+                    <option value="sports">文体表现</option>
+                  </select>
+                </label>
+                <label class="manual-field">
+                  <span>加分级别</span>
+                  <select v-model="targetManualForm.level">
+                    <option value="">请选择</option>
+                    <option value="院级">院级</option>
+                    <option value="校级">校级</option>
+                    <option value="省级">省级</option>
+                    <option value="国家级">国家级</option>
+                    <option value="国际级">国际级</option>
+                    <option value="其他">其他</option>
+                  </select>
+                </label>
+                <label class="manual-field">
+                  <span>建议加分</span>
+                  <input v-model="targetManualForm.score" inputmode="decimal" placeholder="由管理员终审确认" />
+                </label>
+                <label class="manual-field">
+                  <span>完成日期</span>
+                  <input v-model="targetManualForm.completion_date" type="date" />
+                </label>
+                <label class="manual-field wide">
+                  <span>补充说明</span>
+                  <textarea v-model="targetManualForm.description" rows="5" placeholder="填写奖项等级、团队身份、排名、主办方、证书编号等关键信息" />
+                </label>
               </div>
             </div>
 
-            <div class="source-card">
-              <header>上传证明材料</header>
-              <template v-if="selectedTargetItem">
-                <div class="selected-target">
-                  <strong>{{ selectedTargetItem.title }}</strong>
-                  <span>+{{ selectedTargetItem.score }}分</span>
+            <div class="source-card targeted-proof-card">
+              <header>上传加分材料证明</header>
+              <label class="source-upload-zone compact-zone">
+                <input type="file" multiple accept=".jpg,.jpeg,.png,.bmp,.webp,.pdf,.doc,.docx" @change="handleTargetManualFileSelect" />
+                <strong>点击上传图片 / PDF / Word</strong>
+                <span>可一次选择多份材料，作为同一个定向申报包提交</span>
+              </label>
+              <div v-if="targetManualFiles.length" class="source-file-list">
+                <div v-for="(file, index) in targetManualFiles" :key="`${file.name}-${index}`" class="source-file-item">
+                  <b>{{ materialFileIcon(file.name) }}</b>
+                  <span>{{ file.name }}</span>
+                  <small>{{ file.proofType || '证明材料' }}</small>
+                  <button @click="removeTargetManualFile(index)">×</button>
                 </div>
-                <div v-for="proof in targetRequiredProofs" :key="proof.type" class="target-proof-row">
-                  <div>
-                    <strong>{{ proof.name }}</strong>
-                    <p>{{ proof.description }}</p>
-                  </div>
-                  <label>
-                    <input type="file" accept=".jpg,.jpeg,.png,.bmp,.webp,.pdf,.doc,.docx" @change="event => handleTargetProofSelect(event, proof.type)" />
-                    {{ targetProofFiles[proof.type]?.name || '上传' }}
-                  </label>
-                </div>
-                <label class="target-date">
-                  项目完成日期
-                  <input v-model="targetCompletionDate" type="date" />
-                </label>
-                <p v-if="targetAiVerifyResult" class="target-ai-result">{{ targetAiVerifyResult }}</p>
-                <button class="source-primary-btn" :disabled="materialParsing" @click="submitTargetedMaterial">
-                  {{ materialParsing ? '提交中...' : '提交审核' }}
-                </button>
-              </template>
-              <div v-else class="analysis-empty">
-                <p>先在左侧选择要申报的综测项目</p>
               </div>
+              <p v-if="targetAiVerifyResult" class="target-ai-result">{{ targetAiVerifyResult }}</p>
+              <button class="source-primary-btn" :disabled="materialParsing" @click="submitTargetedMaterial">
+                {{ materialParsing ? '提交中...' : '提交审核' }}
+              </button>
+              <p class="source-note">定向提交不会自动入账，管理员会在审核队列中核验项目名称、级别、分值和材料原件。</p>
             </div>
           </div>
 
@@ -2483,6 +3071,7 @@ onMounted(loadAll)
                 <button class="approve" :disabled="item.status === 'approved'" @click="decide(item, 'approved')">通过</button>
                 <button class="detail" @click="decide(item, 'needs_more')">补材料</button>
                 <button class="reject" @click="decide(item, 'rejected')">驳回</button>
+                <button class="detail" @click="decide(item, 'return')">重新打回</button>
               </span>
             </div>
           </div>
@@ -2656,7 +3245,7 @@ onMounted(loadAll)
           @error="markOpportunityImageBroken(selectedOpportunity)"
         />
         <div v-else :class="['detail-cover-fallback', opportunityFallbackClass(selectedOpportunity)]">
-          <span>{{ selectedOpportunity.category }}</span>
+          <span>{{ opportunityFallbackKeyword(selectedOpportunity) }}</span>
           <strong>{{ opportunityFallbackTitle(selectedOpportunity) }}</strong>
         </div>
         <p>{{ selectedOpportunity.description }}</p>

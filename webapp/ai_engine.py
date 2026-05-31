@@ -130,10 +130,10 @@ def _get_llm():
 # Text Extraction
 # ══════════════════════════════════════════
 def _normalize_text(text: str) -> str:
-    """清洗文本：去空格、统一标点"""
-    text = re.sub(r'\s+', ' ', text)
-    text = text.replace('（', '(').replace('）', ')').replace('：', ':').replace('，', ',')
-    text = re.sub(r'[^一-鿿\w\d\s\(\)\[\],.、:;\-+/=≥≤%℃]', '', text)
+    """Clean OCR text while preserving Chinese, English, digits, and audit punctuation."""
+    text = re.sub(r'\s+', ' ', text or '')
+    text = text.replace('?', '(').replace('?', ')').replace('?', ':').replace('?', ',')
+    text = re.sub(r'[^\u4e00-\u9fffA-Za-z0-9\s\(\)\[\],.?:;?\-+/=<>%#_]', '', text)
     return text.strip()
 
 def extract_text_from_image(file_path: str) -> str:
@@ -576,7 +576,7 @@ def match_catalog_items(text: str, catalog_items: list, filename: str = '',
         has_primary_match = False
 
         # 1. 签名关键词匹配（模糊匹配）
-        sig = ITEM_SIGNATURES.get(item['id'], {})
+        sig = ITEM_SIGNATURES.get(item['id'], {}) or ITEM_SIGNATURES.get(str(item['id'])[:4], {})
         sig_keywords = sig.get('keywords', [])
         sig_boost = sig.get('boost', 5)
         matched_sigs = _contains_any_fuzzy(clean_text, sig_keywords, threshold=0.7)
@@ -842,7 +842,11 @@ def _score_confidence(match: dict, extracted_text: str, filename: str = '',
     # ════════════════ 汇总 ════════════════
     total_adjustment = sum(adj for _, adj in adjustments if adj != 0)
     new_conf = base_conf + total_adjustment
-    new_conf = max(5, min(98, new_conf))
+    cap, cap_reasons = _strict_confidence_cap(match, extracted_text, filename, student_name, student_id)
+    if cap_reasons:
+        reasons.extend(cap_reasons)
+        adjustments.append(('?????', cap - 98))
+    new_conf = max(5, min(98, new_conf, cap))
 
     # 负向信号极多时直接标记为高风险
     risk_level = 'low'
@@ -955,6 +959,285 @@ def _validate_matches(matches: list, extracted_text: str) -> list:
     return validated
 
 
+def _first_match(patterns: list[str], text: str) -> str:
+    for pattern in patterns:
+        found = re.search(pattern, text, re.IGNORECASE)
+        if found:
+            return next((part for part in found.groups() if part), found.group(0)).strip()
+    return ''
+
+
+
+
+def _strict_contains_any(text: str, words: list[str]) -> bool:
+    return any(word and word in text for word in words)
+
+
+def _extract_award_granularity(text: str) -> dict:
+    """Extract project level and prize level separately so project+award is preserved."""
+    source = _normalize_text(text or '')
+    project_level = ''
+    contextual_levels = [
+        ('\u7701\u7ea7', [r'\u7701\u7ea7.{0,8}(?:\u7279\u7b49\u5956|\u4e00\u7b49\u5956|\u4e8c\u7b49\u5956|\u4e09\u7b49\u5956)', r'\u7701\u8d5b.{0,8}(?:\u7279\u7b49\u5956|\u4e00\u7b49\u5956|\u4e8c\u7b49\u5956|\u4e09\u7b49\u5956)', r'\u8d5b\u533a.{0,8}(?:\u7279\u7b49\u5956|\u4e00\u7b49\u5956|\u4e8c\u7b49\u5956|\u4e09\u7b49\u5956)']),
+        ('\u56fd\u5bb6\u7ea7', [r'\u56fd\u5bb6\u7ea7.{0,8}(?:\u7279\u7b49\u5956|\u4e00\u7b49\u5956|\u4e8c\u7b49\u5956|\u4e09\u7b49\u5956)', r'\u56fd\u8d5b.{0,8}(?:\u7279\u7b49\u5956|\u4e00\u7b49\u5956|\u4e8c\u7b49\u5956|\u4e09\u7b49\u5956)']),
+        ('\u6821\u7ea7', [r'\u6821\u7ea7.{0,8}(?:\u7279\u7b49\u5956|\u4e00\u7b49\u5956|\u4e8c\u7b49\u5956|\u4e09\u7b49\u5956)']),
+        ('\u9662\u7ea7', [r'\u9662\u7ea7.{0,8}(?:\u7279\u7b49\u5956|\u4e00\u7b49\u5956|\u4e8c\u7b49\u5956|\u4e09\u7b49\u5956)']),
+    ]
+    for label, patterns in contextual_levels:
+        if any(re.search(pattern, source) for pattern in patterns):
+            project_level = label
+            break
+    level_patterns = [
+        ('\u56fd\u9645\u7ea7', ['\u56fd\u9645\u7ea7', '\u56fd\u9645', '\u5168\u7403']),
+        ('\u56fd\u5bb6\u7ea7', ['\u56fd\u5bb6\u7ea7', '\u5168\u56fd', '\u56fd\u8d5b', '\u6559\u80b2\u90e8', '\u56fd\u5bb6']),
+        ('\u7701\u7ea7', ['\u7701\u7ea7', '\u7701\u8d5b', '\u8d5b\u533a', '\u5e7f\u4e1c\u7701', '\u5168\u7701', '\u7701\u90e8\u7ea7']),
+        ('\u6821\u7ea7', ['\u6821\u7ea7', '\u6821\u8d5b', '\u5168\u6821', '\u5b66\u6821']),
+        ('\u9662\u7ea7', ['\u9662\u7ea7', '\u9662\u8d5b', '\u5b66\u9662', '\u672c\u9662']),
+        ('\u73ed\u7ea7', ['\u73ed\u7ea7', '\u73ed\u5185']),
+    ]
+    if not project_level:
+        for label, patterns in level_patterns:
+            if any(pattern in source for pattern in patterns):
+                project_level = label
+                break
+    prize_level = ''
+    prize_patterns = [
+        ('\u7279\u7b49\u5956', ['\u7279\u7b49\u5956', '\u6700\u9ad8\u5956']),
+        ('\u4e00\u7b49\u5956', ['\u4e00\u7b49\u5956', '\u7b2c\u4e00\u540d', '\u51a0\u519b', '\u91d1\u5956']),
+        ('\u4e8c\u7b49\u5956', ['\u4e8c\u7b49\u5956', '\u7b2c\u4e8c\u540d', '\u4e9a\u519b', '\u94f6\u5956']),
+        ('\u4e09\u7b49\u5956', ['\u4e09\u7b49\u5956', '\u7b2c\u4e09\u540d', '\u5b63\u519b', '\u94dc\u5956']),
+        ('\u4f18\u79c0\u5956', ['\u4f18\u79c0\u5956']),
+    ]
+    for label, patterns in prize_patterns:
+        if any(pattern in source for pattern in patterns):
+            prize_level = label
+            break
+    return {
+        'project_level': project_level,
+        'prize_level': prize_level,
+        'award_level_detail': ''.join([project_level, prize_level]) or project_level or prize_level,
+    }
+
+
+def _strict_confidence_cap(match: dict, text: str, filename: str,
+                           student_name: str = '', student_id: str = '') -> tuple[int, list[str]]:
+    """Evidence-calibrated upper bound. Prevents raw matching from becoming 98% without a complete evidence chain."""
+    source = f'{filename}\n{text or ""}\n{match.get("title", "")}\n{match.get("reason", "")}'
+    normalized = _normalize_text(source)
+    cap = 96
+    reasons = []
+
+    official = _strict_contains_any(normalized, [
+        '\u8bc1\u4e66', '\u8bc1\u660e', '\u5408\u683c\u8bc1', '\u83b7\u5956\u8bc1\u4e66', '\u6210\u7ee9\u5355',
+        '\u8003\u8bd5\u9662', '\u6559\u80b2\u90e8', '\u5de5\u4e1a\u548c\u4fe1\u606f\u5316\u90e8', '\u5de5\u4fe1\u90e8',
+        '\u7ec4\u59d4\u4f1a', '\u59d4\u5458\u4f1a', '\u534f\u4f1a', '\u5b66\u6821', '\u5b66\u9662', '\u5927\u5b66',
+        '\u516c\u7ae0', '\u76d6\u7ae0', 'seal', 'certificate'
+    ])
+    completion = _strict_contains_any(normalized, [
+        '\u4e00\u7b49\u5956', '\u4e8c\u7b49\u5956', '\u4e09\u7b49\u5956', '\u7279\u7b49\u5956', '\u4f18\u79c0\u5956',
+        '\u91d1\u5956', '\u94f6\u5956', '\u94dc\u5956', '\u5408\u683c', '\u901a\u8fc7', '\u8363\u83b7', '\u83b7\u5956',
+        '\u6388\u4e88', '\u9881\u53d1', '\u6210\u7ee9'
+    ])
+    date_ok = bool(re.search(r'20\d{2}\s*(?:\u5e74|[-./]\s*)\s*(?:0?[1-9]|1[0-2])', normalized, re.I))
+    text_len = len(re.sub(r'\s+', '', normalized))
+    award = _extract_award_granularity(normalized)
+    title = _normalize_text(match.get('title', ''))
+    requires_prize = any(word in title for word in ['\u7ade\u8d5b', '\u6311\u6218\u676f', '\u4e92\u8054\u7f51+', '\u84dd\u6865\u676f', '\u7535\u5b50\u8bbe\u8ba1', '\u83b7\u5956', '\u5956'])
+
+    if not official:
+        cap = min(cap, 78)
+        reasons.append('\u7f3a\u5c11\u5b98\u65b9\u8bc1\u4e66/\u673a\u6784/\u516c\u7ae0\u4fe1\u53f7')
+    if not completion:
+        cap = min(cap, 74)
+        reasons.append('\u672a\u8bc6\u522b\u5230\u83b7\u5956\u6216\u5b8c\u6210\u4fe1\u53f7')
+    if not date_ok:
+        cap = min(cap, 88)
+        reasons.append('\u7f3a\u5c11\u53ef\u6838\u9a8c\u65e5\u671f')
+    if text_len < 40:
+        cap = min(cap, 72)
+        reasons.append('OCR\u6709\u6548\u6587\u672c\u4e0d\u8db3')
+    elif text_len < 100:
+        cap = min(cap, 86)
+        reasons.append('OCR\u6587\u672c\u4fe1\u606f\u504f\u5c11')
+
+    if student_name:
+        has_name = student_name in normalized
+        has_id = bool(student_id and student_id in normalized)
+        extracted = _extract_audit_features(text, filename, student_name, student_id).get('detected_name', '')
+        if extracted and not (student_name in extracted or extracted in student_name or SequenceMatcher(None, student_name.lower(), extracted.lower()).ratio() >= 0.72):
+            cap = min(cap, 72)
+            reasons.append('\u6750\u6599\u59d3\u540d\u4e0e\u5f53\u524d\u8d26\u53f7\u4e0d\u4e00\u81f4')
+        elif not has_name and not has_id:
+            cap = min(cap, 82)
+            reasons.append('\u7f3a\u5c11\u5f53\u524d\u5b66\u751f\u8eab\u4efd\u5339\u914d\u8bc1\u636e')
+
+    if match.get('level') and award['project_level'] and award['project_level'] != match.get('level'):
+        cap = min(cap, 68)
+        reasons.append(f'\u6750\u6599\u8d5b\u4e8b\u7ea7\u522b\u4e3a{award["project_level"]}\uff0c\u4e0e\u5339\u914d\u9879\u76ee{match.get("level")}\u4e0d\u4e00\u81f4')
+    if requires_prize and not award['prize_level']:
+        cap = min(cap, 80)
+        reasons.append('\u672a\u8bc6\u522b\u5230\u660e\u786e\u5956\u9879\u7b49\u7ea7')
+    if requires_prize and award['prize_level'] and not award['project_level']:
+        cap = min(cap, 82)
+        reasons.append(f'\u4ec5\u8bc6\u522b\u5230{award["prize_level"]}\uff0c\u7f3a\u5c11\u56fd\u5bb6/\u7701/\u6821/\u9662\u7ea7\u522b')
+
+    return cap, reasons
+
+def _extract_audit_features(text: str, filename: str, student_name: str = '', student_id: str = '') -> dict:
+    source = f'{filename}\n{text}'
+    detected_name = _first_match([
+        r'姓名\s*([\u4e00-\u9fa5]{2,4})(?=\d|身份证|证件|Name|参加|$)',
+        r'姓名[:：\s]*([\u4e00-\u9fa5]{2,4})',
+        r'姓\s*名\s*([\u4e00-\u9fa5]{2,4})(?=\d|身份证|证件|Name|参加|$)',
+        r'Name[:：\s]*([A-Za-z\s]{2,40})',
+        r'(Yulin\s+Xiao|Xiao\s+Yulin)',
+        r'([\u4e00-\u9fa5]{2,4})同学',
+    ], source)
+    if not detected_name and student_name and student_name in source:
+        detected_name = student_name
+    event_name = _first_match([
+        r'((?:第.{1,12}届)?[^，。\n]{2,40}(?:竞赛|挑战赛|大赛|杯|证书|认证|活动))',
+        r'([A-Za-z0-9\s-]{3,60}(?:Competition|Challenge|Certificate|Certification|Contest))',
+    ], source)
+    award_level = _first_match([
+        r'(国家级|省级|校级|院级|班级|国际级)',
+        r'(特等奖|一等奖|二等奖|三等奖|优秀奖|金奖|银奖|铜奖)',
+        r'(provincial|national|campus|college|first prize|second prize|third prize)',
+    ], source)
+    rank = _first_match([
+        r'(负责人|队长|成员|普通成员|指导老师|联合创始人|Co-Founder|co founder|participant|winner)',
+        r'(第[一二三四五六七八九十0-9]+名|Top\s*\d+)',
+    ], source)
+    date_value = _first_match([
+        r'((?:202\d)[-./年](?:0?[1-9]|1[0-2])[-./月](?:0?[1-9]|[12]\d|3[01])日?)',
+        r'((?:202\d)(?:\s*年\s*|\s*[-./]\s*|\s+)(?:0?[1-9]|1[0-2])\s*月?)',
+        r'((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+20\d{2})',
+        r'(\d{1,2}(?:st|nd|rd|th)?\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+20\d{2})',
+    ], source)
+    is_name_matched = bool(
+        student_name and detected_name and (
+            student_name in detected_name or detected_name in student_name
+            or SequenceMatcher(None, student_name.lower(), detected_name.lower()).ratio() >= 0.72
+        )
+    )
+    award_granularity = _extract_award_granularity(source)
+    if award_granularity.get('award_level_detail'):
+        award_level = award_granularity['award_level_detail']
+    return {
+        'detected_name': detected_name,
+        'student_name': student_name,
+        'student_id': student_id,
+        'is_name_matched': is_name_matched,
+        'event_name': event_name,
+        'award_level': award_level,
+        'project_level': award_granularity.get('project_level', ''),
+        'prize_level': award_granularity.get('prize_level', ''),
+        'award_level_detail': award_granularity.get('award_level_detail', ''),
+        'rank_type': rank,
+        'date': date_value,
+        'has_official_seal': any(word in source for word in ['公章', '盖章', 'seal', 'Seal', '委员会', '组委会', '证书']),
+        'is_tampered': any(word in source for word in ['涂改', '篡改', 'P图', '伪造']),
+    }
+
+
+def _audit_status(confidence: float, risk_tags: list[str], missing_fields: list[dict]) -> str:
+    if confidence < 60 or 'TAMPER_SUSPECTED' in risk_tags:
+        return 'HIGH_RISK'
+    if missing_fields or risk_tags:
+        return 'NEED_SUPPLEMENT'
+    if confidence >= 95:
+        return 'HIGH_CONFIDENCE'
+    return 'PENDING_HUMAN'
+
+
+def _build_audit_payload(match: dict, extracted_text: str, filename: str,
+                         student_name: str = '', student_id: str = '') -> dict:
+    confidence = float(match.get('confidence') or 0)
+    features = _extract_audit_features(extracted_text, filename, student_name, student_id)
+    text_blob = f'{filename}\n{extracted_text}\n{match.get("title", "")}\n{match.get("reason", "")}'
+    lower_blob = text_blob.lower()
+    risk_tags = []
+    missing_fields = []
+
+    if features['is_tampered']:
+        risk_tags.append('TAMPER_SUSPECTED')
+    if student_name and features['detected_name'] and not features['is_name_matched']:
+        risk_tags.append('NAME_MISMATCH')
+    if any(word in lower_blob for word in ['929', 'challenge startup', 'co-founder', 'co founder', '中葡']):
+        risk_tags.extend(['COMPLEX_TEAM_ROLE', 'UNLISTED_COMPETITION'])
+        missing_fields.append({
+            'field_key': 'team_rank_proof',
+            'field_name': '团队成员排名及加分比例证明',
+            'guidance_tips': '请上传包含指导老师签字或学院盖章的团队成员排序表，以判定按负责人100%还是成员比例折算加分。',
+        })
+        missing_fields.append({
+            'field_key': 'official_notice_screenshot',
+            'field_name': '学校或学院发布的官方通知截图',
+            'guidance_tips': '冷门或境外赛事需补充校院通知、转发通知或学院认可证明。',
+        })
+    if not features['detected_name'] and student_name:
+        risk_tags.append('IDENTITY_UNCLEAR')
+        missing_fields.append({
+            'field_key': 'identity_match_proof',
+            'field_name': '个人身份匹配证明',
+            'guidance_tips': '请补充能同时显示姓名、学号或账号归属的材料。',
+        })
+    if not features.get('date'):
+        risk_tags.append('DATE_UNCLEAR')
+        missing_fields.append({
+            'field_key': 'date_proof',
+            'field_name': '??/??????',
+            'guidance_tips': '?????????????????????????',
+        })
+    if ('??' in match.get('title', '') or '?' in match.get('title', '')) and not features.get('award_level_detail'):
+        risk_tags.append('AWARD_LEVEL_UNCLEAR')
+        missing_fields.append({
+            'field_key': 'award_level_proof',
+            'field_name': '???????????',
+            'guidance_tips': '??????????/?/?/???????/???/???????',
+        })
+    if confidence < 60:
+        risk_tags.append('LOW_CONFIDENCE')
+    elif confidence < 90 and not risk_tags:
+        risk_tags.append('HUMAN_CONFIRM_REQUIRED')
+
+    # De-duplicate while preserving order.
+    risk_tags = list(dict.fromkeys(risk_tags))
+    deduped_missing = []
+    seen_fields = set()
+    for item in missing_fields:
+        if item['field_key'] not in seen_fields:
+            deduped_missing.append(item)
+            seen_fields.add(item['field_key'])
+
+    clause_text = match.get('section') or match.get('note') or match.get('description') or match.get('title') or ''
+    audit_chain = [
+        f"Step 1: OCR/文档解析提取材料文本，来源文件为「{filename}」。",
+        f"Step 2: 匹配综测目录项目「{match.get('title', '')}」，置信度 {confidence:.1f}%。",
+        f"Step 3: 对照细则条目「{clause_text or '待管理员确认'}」，建议分值 {match.get('score_val', match.get('score', 0))} 分。",
+    ]
+    if risk_tags:
+        audit_chain.append(f"Step 4: 触发风控标签 {', '.join(risk_tags)}，需管理员复核或要求补件。")
+
+    return {
+        'status': _audit_status(confidence, risk_tags, deduped_missing),
+        'confidence_score': confidence,
+        'matched_regulation': {
+            'section': match.get('section', ''),
+            'clause_id': match.get('id', ''),
+            'clause_text': clause_text,
+            'score_calculated': match.get('score_val', match.get('score', 0)),
+        },
+        'extracted_features': features,
+        'risk_assessment': {
+            'risk_tags': risk_tags,
+            'risk_description': '；'.join(item['guidance_tips'] for item in deduped_missing) or match.get('reason', ''),
+        },
+        'missing_fields': deduped_missing,
+        'audit_chain': audit_chain,
+    }
+
+
 def _llm_match_with_tools(extracted_text: str, catalog_items: list,
                           filename: str, extra_keyword: str) -> Optional[list]:
     """使用自定义 LLM + 工具调用进行综测项目匹配"""
@@ -966,7 +1249,7 @@ def _llm_match_with_tools(extracted_text: str, catalog_items: list,
     catalog_json = _build_catalog_json(catalog_items, 250)
     catalog_by_id = _build_catalog_index(catalog_items)
 
-    system_prompt = f"""你是高校综测加分审核助手。你的任务是根据证明材料文字内容，从目录中精准匹配综测加分项目。
+    system_prompt = f"""你是高校综测加分审核助手。你同时承担 OCR 文本抽取校对、风控合规官和综测细则映射器三种职责。你的任务是根据证明材料文字内容，从目录中精准匹配综测加分项目。
 
 你必须使用 match_comprehensive_item 工具提交匹配结果。只对你**确信匹配**的项目调用工具。
 
@@ -998,6 +1281,13 @@ def _llm_match_with_tools(extracted_text: str, catalog_items: list,
 - 目录有精确对应（名称+级别完全吻合）→ 只提交这1-2个精确项目
 - 目录无精确对应（如特殊比赛名、冷门证书等）→ 广泛提交4-8个可能相关的候选
 - 模糊场景下置信度30-50也提交，标记为"供人工参考"
+
+▎规则6：风控与置信度
+- 90-100：官方正式证书、姓名与学生一致、细则有明确对应条款。
+- 60-89：证书真实但属于复合/冷门场景，需要结合团队排名、校院通知或官方来源确认。
+- 30-59：材料模糊、关键印章/姓名/来源缺失，必须提示补充材料。
+- 0-29：涉嫌伪造、姓名不符或完全不属于综测加分范畴。
+- 对英文证书、境外赛事、创业挑战赛、Co-Founder/团队身份等场景，必须降低置信度并提示补充团队分工或校院认可证明。
 
 ═══════════════════════════════════════
 以下是电信学院完整综测项目目录（共{len(catalog_items)}项）：
@@ -1109,6 +1399,7 @@ def analyze_files(uploaded_files: list, catalog_items: list,
                     'academic': '学业表现',
                     'sports': '文体表现'
                 }.get(m.get('category', ''), '')
+            m['audit'] = _build_audit_payload(m, extracted, fname, student_name, student_id)
 
         results.append({
             'file_id': uf.get('id'), 'filename': fname,

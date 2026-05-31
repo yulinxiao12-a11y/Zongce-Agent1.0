@@ -1,7 +1,7 @@
 type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE'
 
 const ruleVersion = '2024-07-12-electronic-info-v1'
-const demoStateVersion = '2026-05-18-v5'
+const demoStateVersion = '2026-05-31-clear-catalog-basket-v1'
 
 const officialImages = {
   lanqiao: 'https://assets.lanqiao.cn/lanqiaobei-fe/v8.5.3/dist/favico.png',
@@ -18,7 +18,13 @@ function loadState() {
   const saved = localStorage.getItem('zongce-static-demo')
   if (saved) {
     const parsed = JSON.parse(saved)
-    if (parsed.demo_version === demoStateVersion) return parsed
+    if (parsed.demo_version === demoStateVersion) {
+      parsed.basket = (parsed.basket || []).filter((item: any) => {
+        if (String(item.opportunity_id || '').startsWith('CAT-')) return Boolean(item.opportunity)
+        return parsed.opportunities?.some((opp: any) => opp.id === item.opportunity_id)
+      })
+      return parsed
+    }
   }
   return {
     demo_version: demoStateVersion,
@@ -200,10 +206,7 @@ function loadState() {
         in_basket: index < 2,
       })),
     ],
-    basket: [
-      { id: 1, stage: '备赛中', note: '先刷历年题，6 月前组队。', opportunity_id: 6 },
-      { id: 2, stage: '想参加', note: '关注学院是否转发通知。', opportunity_id: 7 },
-    ],
+    basket: [],
     applications: [
       makeApplication(1, 1, 7, '蓝桥杯省级三等奖认证', 'academic', '省级三等奖', 0.91, 6, 'pending_human', ['AI高置信', '待人工确认']),
       makeApplication(2, 2, 6, '全国大学生电子设计竞赛省级二等奖认证', 'academic', '省级二等奖', 0.93, 18, 'pending_human', ['AI高置信']),
@@ -290,6 +293,17 @@ function fileToDataUrl(file: File) {
 }
 
 function hydrateOpportunity(item: any) {
+  if (!item) {
+    item = {
+      id: 0,
+      source_type: 'evergreen',
+      title: '待恢复的备赛项目',
+      category: '综测项目',
+      dimension: 'academic',
+      roi_score: 0,
+      images: [],
+    }
+  }
   return {
     ...item,
     dimension_label: item.dimension === 'moral' ? '德育' : item.dimension === 'arts_sports' ? '文体' : '学业',
@@ -299,7 +313,43 @@ function hydrateOpportunity(item: any) {
 }
 
 function basketRow(item: any) {
-  return { ...item, opportunity: hydrateOpportunity(state.opportunities.find((opp: any) => opp.id === item.opportunity_id)) }
+  const opportunity = item.opportunity || state.opportunities.find((opp: any) => opp.id === item.opportunity_id)
+  return { ...item, opportunity: hydrateOpportunity(opportunity) }
+}
+
+function catalogOpportunityFromBody(body: any) {
+  const dimension = body.category === 'sports' ? 'arts_sports' : ['moral', 'academic', 'arts_sports'].includes(body.category) ? body.category : 'academic'
+  const dimensionLabel = body.category_name || (dimension === 'moral' ? '德育' : dimension === 'arts_sports' ? '文体' : '学业')
+  return {
+    id: `CAT-${body.catalog_item_id}`,
+    source_type: 'evergreen',
+    source_label: '星轨探索',
+    title: body.title || '综测备赛项目',
+    category: body.section || dimensionLabel,
+    dimension,
+    dimension_label: dimensionLabel,
+    organizer: '综测细则目录',
+    location: '',
+    start_time: '',
+    deadline: '',
+    season_months: '',
+    credit_hint: body.description || `${body.level || ''}项目，预计可加 ${body.score || 0} 分`,
+    rule_ref: body.section || '',
+    official_url: '',
+    registration_url: '',
+    contact_email: '',
+    article_url: '',
+    group_qr_url: '',
+    description: body.description || body.title || '',
+    requirements: ['活动或比赛通知', '参与/获奖证明', '个人身份匹配证明'],
+    tags: [body.level, body.section].filter(Boolean),
+    attachments: [],
+    images: [],
+    roi_score: Number(body.score || 0),
+    in_basket: true,
+    activity_id: `CAT-${body.catalog_item_id}`,
+    catalog_item_id: body.catalog_item_id,
+  }
 }
 
 function dashboardSummary() {
@@ -375,7 +425,11 @@ export async function mockApi<T>(path: string, options: RequestInit = {}): Promi
 
   if (method === 'POST' && cleanPath === '/plan-basket') {
     const body = bodyJson(options)
-    const item = { id: Date.now(), stage: body.stage || '想参加', note: '', opportunity_id: body.opportunity_id }
+    const opportunity = body.catalog_item_id ? catalogOpportunityFromBody(body) : undefined
+    const opportunityId = opportunity?.id || body.opportunity_id
+    const existing = state.basket.find((row: any) => row.opportunity_id === opportunityId)
+    if (existing) return basketRow(existing) as T
+    const item = { id: opportunity ? `local-${opportunityId}` : Date.now(), stage: body.stage || '想参加', note: '', opportunity_id: opportunityId, opportunity }
     state.basket.push(item)
     saveState()
     return basketRow(item) as T
