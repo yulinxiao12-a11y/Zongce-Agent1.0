@@ -349,16 +349,27 @@ ITEM_SIGNATURES = {
     'M004': {'keywords':['学生会副部长','校学生会部长副职'],'boost':6},
     'M005': {'keywords':['学生会干事','校会干事','学生会成员','校学生会干事满一年'],'boost':5},
     'M006': {'keywords':['社联','社团联合会','校学生社团联合会主席团','校社联'],'boost':9},
-    'M007': {'keywords':['社联部长','社联干事','社团联合会部长'],'boost':6},
+    'M007a': {'keywords':['社联部长','社团联合会部长','校社联部长','校学生社团联合会部长'],'boost':6},
+    'M007b': {'keywords':['社联干事','社团联合会干事','校社联干事','校学生社团联合会干事'],'boost':4},
     'M008': {'keywords':['青年志愿者协会主席团','校青协主席团','青协主席团'],'boost':10},
-    'M009': {'keywords':['青年志愿者协会部长','青协部长','青协干事','校青协部长'],'boost':6},
+    'M009a': {'keywords':['青年志愿者协会部长','青协部长','校青协部长'],'boost':6},
+    'M009b': {'keywords':['青年志愿者协会干事','青协干事','校青协干事'],'boost':4},
     'M010': {'keywords':['红十字会主席团','校红会主席团'],'boost':10},
-    'M011': {'keywords':['自律委员会','校自律委员会'],'boost':6},
-    'M012': {'keywords':['勤工助学中心','广播站','勤工助学'],'boost':6},
-    'M013': {'keywords':['艺术团主席团','艺术团分团长','校艺术团'],'boost':9},
-    'M014': {'keywords':['国旗护卫队','国旗护卫队队长'],'boost':6},
+    'M011a': {'keywords':['自律委员会主席团','校自律委员会主席团'],'boost':6},
+    'M011b': {'keywords':['自律委员会部长','校自律委员会部长'],'boost':4},
+    'M011c': {'keywords':['自律委员会干事','校自律委员会干事'],'boost':3},
+    'M012a': {'keywords':['勤工助学中心主席团','勤工助学中心','校勤工助学'],'boost':9},
+    'M012b': {'keywords':['勤工助学中心部长','校勤工助学部长'],'boost':6},
+    'M012c': {'keywords':['广播站主席团','校广播站主席团','校广播站'],'boost':9},
+    'M012d': {'keywords':['广播站部长','校广播站部长'],'boost':6},
+    'M013a': {'keywords':['艺术团主席团','校艺术团主席团'],'boost':9},
+    'M013b': {'keywords':['艺术团分团长','校艺术团分团团长','校艺术团分团长'],'boost':6},
+    'M014a': {'keywords':['国旗护卫队队长','国旗护卫队队长职务'],'boost':6},
+    'M014b': {'keywords':['国旗护卫队部长','国旗护卫队部长职务'],'boost':4},
+    'M014c': {'keywords':['国旗护卫队队员','国旗护卫队队员职务','国旗队'],'boost':3},
     'M015': {'keywords':['编辑部','广师大学生','责编'],'boost':5},
-    'M016': {'keywords':['辩论队队长','辩论队队员','校辩论队'],'boost':5},
+    'M016a': {'keywords':['辩论队队长','校辩论队队长'],'boost':5},
+    'M016b': {'keywords':['辩论队队员','校辩论队队员'],'boost':3},
     'M017': {'keywords':['工作助理','学生处助理','校团委工作助理'],'boost':8},
     'M018': {'keywords':['广师视频','广师视频成员','校园电视台'],'boost':6},
     'M019': {'keywords':['院学生会主席','团总支副书记','院主席团','院团总支学生会主席'],'boost':10},
@@ -367,9 +378,12 @@ ITEM_SIGNATURES = {
     'M022': {'keywords':['预干','院学生会预干','院团总支学生会预干'],'boost':3},
     'M023': {'keywords':['科技站技术部优秀','科技站考核优秀','院科技站技术部优秀'],'boost':10},
     'M024': {'keywords':['科技站技术部合格','科技站考核合格','院科技站技术部合格'],'boost':6},
-    'M025': {'keywords':['科技站秘书部','科技站秘书部部长','科技站秘书部成员'],'boost':7},
-    'M026': {'keywords':['学生党支部','党支部副书记','党支部委员','院学生党支部'],'boost':6},
-    'M027': {'keywords':['医保小组','综测小组','助学贷款小组','心理小组','就业小组','党务小组','小组组长'],'boost':7},
+    'M025a': {'keywords':['科技站秘书部部长','院科技站秘书部部长','科技站部长'],'boost':7},
+    'M025b': {'keywords':['科技站秘书部成员','院科技站秘书部成员','科技站成员'],'boost':6},
+    'M026a': {'keywords':['学生党支部副书记','党支部副书记','院学生党支部副书记'],'boost':6},
+    'M026b': {'keywords':['学生党支部委员','党支部委员','院学生党支部委员'],'boost':5},
+    'M027a': {'keywords':['医保小组组长','综测小组组长','助学贷款小组组长','心理小组组长','就业小组组长','党务小组组长','院级工作小组组长'],'boost':7},
+    'M027b': {'keywords':['医保小组组员','综测小组组员','助学贷款小组组员','心理小组组员','就业小组组员','党务小组组员','院级工作小组组员'],'boost':5},
     'M028': {'keywords':['辅导员助理','辅导员助理满一年'],'boost':6},
     'M029': {'keywords':['助理班主任','助班'],'boost':6},
     'M030': {'keywords':['助部','院级助部'],'boost':4},
@@ -395,12 +409,23 @@ ITEM_SIGNATURES = {
     'M052': {'keywords':['省级优秀学生干部','省级优秀团干','省级优秀团员','省级积极分子','省优秀学生','省三好学生'],'boost':10},
     'M053': {'keywords':['校级优秀学生干部','优秀团干','优秀团员','积极分子','三好学生','优秀学生'],'boost':9},
     'M054': {'keywords':['院级优秀学生干部','院优秀团员','院积极分子','院三好'],'boost':7},
-    'M055': {'keywords':['军训先进个人','军训优秀','军训标兵','军训优秀学员'],'boost':8},
-    'M056': {'keywords':['军训副排长','副连长','副排长','军训副连长'],'boost':5},
+    'M055a': {'keywords':['军训先进个人','军训先进个人称号'],'boost':8},
+    'M055b': {'keywords':['军训优秀学生干部','军训优秀干部'],'boost':8},
+    'M056a': {'keywords':['军训副排长','副排长'],'boost':5},
+    'M056b': {'keywords':['军训副连长','副连长','军训副连长职务'],'boost':5},
+    'M058': {'keywords':['校级文体先进个人','文体先进个人校级'],'boost':6},
+    'M059': {'keywords':['院级文体先进个人','文体先进个人院级'],'boost':4},
+    'M060': {'keywords':['献血先进个人','献血先进'],'boost':4},
+    'M061a': {'keywords':['校学生处通报表扬','学生处表扬'],'boost':4},
+    'M061b': {'keywords':['校团委通报表扬','团委表扬'],'boost':4},
+    'M061c': {'keywords':['校学生会通报表扬','学生会表扬'],'boost':4},
+    'M062': {'keywords':['科技站学术之星','学术之星'],'boost':7},
     'M063': {'keywords':['无偿献血','献血','献血证','献血证明'],'boost':8},
     'M064': {'keywords':['见义勇为','英勇行为','见义勇为表彰'],'boost':10},
     'M066': {'keywords':['文明宿舍标兵','宿舍标兵','标兵宿舍'],'boost':9},
     'M067': {'keywords':['文明宿舍','优秀宿舍','文明寝室'],'boost':8},
+    'M073a': {'keywords':['院办公室值班','院办值班','办公室值班'],'boost':3},
+    'M073b': {'keywords':['党建办公室值班','党建办值班'],'boost':3},
 
     # ── 学业: 论文/专利 ──
     'A001': {'keywords':['国家级学术论文','全国学术会议','国家学术会议宣读','全国性学术会议'],'boost':10},
@@ -413,12 +438,86 @@ ITEM_SIGNATURES = {
     'A067': {'keywords':['软件著作权','软著','计算机软件著作权','软件版权'],'boost':9},
     'A069': {'keywords':['发明专利申请','申请发明专利','专利申请'],'boost':7},
 
-    # ── 学业: 竞赛 ──
-    'A007': {'keywords':['互联网+国家级','挑战杯国家级','电子设计国赛','全国大学生电子设计','国家特等奖','国家一等奖','国赛一等奖'],'boost':10},
-    'A008': {'keywords':['互联网+省级','挑战杯省级','电子设计省赛','省特等奖','省一等奖','省赛特等奖'],'boost':10},
-    'A009': {'keywords':['省二等奖','省级二等奖','省赛二等奖'],'boost':9},
-    'A010': {'keywords':['省三等奖','省级三等奖','省赛三等奖'],'boost':8},
-    'A012': {'keywords':['校级竞赛最高奖','校一等奖','校特等奖','校赛最高奖'],'boost':7},
+    # ── 学业: 重点科技竞赛（互联网+ / 大挑 / 小挑 / 电子设计竞赛） ──
+    # 大挑 = "挑战杯"全国大学生课外学术科技作品竞赛（学术科研/发明创作/调研报告，奇数年）
+    # 小挑 = "挑战杯"中国大学生创业计划竞赛/创青春（商业创业/项目落地/商业模式，偶数年）
+    # 国家级最高奖
+    'A007I': {'keywords':['互联网+国家级最高奖','互联网+国赛最高奖','互联网+国家特等奖','互联网+国家一等奖','互联网+国赛特等奖','互联网+国赛一等奖','中国国际互联网+最高奖','互联网+金奖'],'boost':10},
+    'A007D': {'keywords':['大挑国家级最高奖','大挑国家特等奖','大挑国家一等奖','大挑国赛特等奖','大挑国赛一等奖','挑战杯国家最高奖','大挑杯最高奖','课外学术科技作品国家最高奖'],'boost':10},
+    'A007X': {'keywords':['小挑国家级最高奖','小挑国家特等奖','小挑国家一等奖','小挑国赛特等奖','小挑国赛一等奖','挑战杯创业计划国家最高奖','创业计划竞赛国家最高奖'],'boost':10},
+    'A007E': {'keywords':['电子设计竞赛国家级最高奖','电子设计国赛最高奖','全国大学生电子设计最高奖','电子设计国家特等奖','电子设计国家一等奖','电赛国赛最高奖','TI杯电子设计最高奖'],'boost':10},
+    # 省级最高奖
+    'A008I': {'keywords':['互联网+省级最高奖','互联网+省特等奖','互联网+省一等奖','互联网+省赛最高奖','互联网+省级金奖'],'boost':10},
+    'A008D': {'keywords':['大挑省级最高奖','大挑省特等奖','大挑省一等奖','大挑省赛最高奖','挑战杯省级最高奖','大挑杯省级最高奖'],'boost':10},
+    'A008X': {'keywords':['小挑省级最高奖','小挑省特等奖','小挑省一等奖','小挑省赛最高奖','创业计划省级最高奖'],'boost':10},
+    'A008E': {'keywords':['电子设计竞赛省级最高奖','电子设计省赛最高奖','电子设计省特等奖','电子设计省一等奖','电赛省赛最高奖'],'boost':10},
+    # 省级次级奖（二等奖）
+    'A009I': {'keywords':['互联网+省级二等奖','互联网+省二等奖','互联网+省赛二等奖'],'boost':9},
+    'A009D': {'keywords':['大挑省级二等奖','大挑省二等奖','大挑省赛二等奖','挑战杯省级二等奖'],'boost':9},
+    'A009X': {'keywords':['小挑省级二等奖','小挑省二等奖','小挑省赛二等奖','创业计划省级二等奖'],'boost':9},
+    'A009E': {'keywords':['电子设计竞赛省级二等奖','电子设计省赛二等奖','电子设计省二等奖','电赛省二等奖'],'boost':9},
+    # 省级三等奖
+    'A010I': {'keywords':['互联网+省级三等奖','互联网+省三等奖','互联网+省赛三等奖'],'boost':8},
+    'A010D': {'keywords':['大挑省级三等奖','大挑省三等奖','大挑省赛三等奖','挑战杯省级三等奖'],'boost':8},
+    'A010X': {'keywords':['小挑省级三等奖','小挑省三等奖','小挑省赛三等奖','创业计划省级三等奖'],'boost':8},
+    'A010E': {'keywords':['电子设计竞赛省级三等奖','电子设计省赛三等奖','电子设计省三等奖','电赛省三等奖'],'boost':8},
+    # 省级参赛/四等奖
+    'A011I': {'keywords':['互联网+省级参赛','互联网+省级四等奖','互联网+省级优秀奖','互联网+省赛参赛'],'boost':5},
+    'A011D': {'keywords':['大挑省级参赛','大挑省级四等奖','大挑省级优秀奖','大挑省赛参赛'],'boost':5},
+    'A011X': {'keywords':['小挑省级参赛','小挑省级四等奖','小挑省级优秀奖','小挑省赛参赛'],'boost':5},
+    'A011E': {'keywords':['电子设计竞赛省级参赛','电子设计省级优秀奖','电赛省赛参赛'],'boost':5},
+    # 校级最高奖
+    'A012I': {'keywords':['互联网+校级最高奖','互联网+校特等奖','互联网+校一等奖','互联网+校赛最高奖'],'boost':7},
+    'A012D': {'keywords':['大挑校级最高奖','大挑校特等奖','大挑校一等奖','大挑校赛最高奖','挑战杯校级最高奖'],'boost':7},
+    'A012X': {'keywords':['小挑校级最高奖','小挑校特等奖','小挑校一等奖','小挑校赛最高奖','创业计划校级最高奖'],'boost':7},
+    'A012E': {'keywords':['电子设计竞赛校级最高奖','电子设计校特等奖','电子设计校一等奖','电赛校赛最高奖'],'boost':7},
+    # 校级次级奖（二等奖）
+    'A013I': {'keywords':['互联网+校级二等奖','互联网+校二等奖','互联网+校赛二等奖'],'boost':6},
+    'A013D': {'keywords':['大挑校级二等奖','大挑校二等奖','大挑校赛二等奖','挑战杯校级二等奖'],'boost':6},
+    'A013X': {'keywords':['小挑校级二等奖','小挑校二等奖','小挑校赛二等奖'],'boost':6},
+    'A013E': {'keywords':['电子设计竞赛校级二等奖','电子设计校二等奖','电赛校二等奖'],'boost':6},
+    # 校级三等奖/参赛
+    'A014I': {'keywords':['互联网+校级三等奖','互联网+校三等奖','互联网+校赛三等奖','互联网+校级参赛'],'boost':4},
+    'A014D': {'keywords':['大挑校级三等奖','大挑校三等奖','大挑校赛三等奖','大挑杯校级参赛'],'boost':4},
+    'A014X': {'keywords':['小挑校级三等奖','小挑校三等奖','小挑校赛三等奖','小挑杯校级参赛'],'boost':4},
+    'A014E': {'keywords':['电子设计竞赛校级三等奖','电赛校三等奖','电子设计校赛三等奖','电子设计校级参赛'],'boost':4},
+    # 院级最高奖
+    'A015I': {'keywords':['互联网+院级最高奖','互联网+院一等奖','互联网+院赛最高奖'],'boost':5},
+    'A015D': {'keywords':['大挑院级最高奖','大挑院一等奖','大挑院赛最高奖','挑战杯院级最高奖'],'boost':5},
+    'A015X': {'keywords':['小挑院级最高奖','小挑院一等奖','小挑院赛最高奖'],'boost':5},
+    'A015E': {'keywords':['电子设计竞赛院级最高奖','电子设计院一等奖','电赛院级最高奖'],'boost':5},
+    # 院级次级奖（二等奖）
+    'A016I': {'keywords':['互联网+院级二等奖','互联网+院二等奖','互联网+院赛二等奖'],'boost':4},
+    'A016D': {'keywords':['大挑院级二等奖','大挑院二等奖','大挑院赛二等奖','挑战杯院级二等奖'],'boost':4},
+    'A016X': {'keywords':['小挑院级二等奖','小挑院二等奖','小挑院赛二等奖'],'boost':4},
+    'A016E': {'keywords':['电子设计竞赛院级二等奖','电子设计院二等奖','电赛院二等奖'],'boost':4},
+    # 院级三等奖/参赛
+    'A017I': {'keywords':['互联网+院级三等奖','互联网+院三等奖','互联网+院赛三等奖','互联网+院级参赛'],'boost':2},
+    'A017D': {'keywords':['大挑院级三等奖','大挑院三等奖','大挑院赛三等奖','大挑杯院级参赛'],'boost':2},
+    'A017X': {'keywords':['小挑院级三等奖','小挑院三等奖','小挑院赛三等奖','小挑杯院级参赛'],'boost':2},
+    'A017E': {'keywords':['电子设计竞赛院级三等奖','电子设计院三等奖','电赛院三等奖','电赛院级参赛'],'boost':2},
+
+    # ── 学业: 其他专业竞赛 ──
+    # 国家级
+    'A026': {'keywords':['其他专业竞赛国家级最高奖','蓝桥杯国家级最高奖','蓝桥杯国赛特等奖','蓝桥杯国赛一等奖','数学建模国家级最高奖','全国数学建模最高奖','智能汽车国家级最高奖','计算机设计国家级最高奖','全国大学生计算机设计最高奖'],'boost':10},
+    'A027': {'keywords':['其他专业竞赛国家级二等奖','蓝桥杯国赛二等奖','数学建模国赛二等奖','智能汽车国赛二等奖','计算机设计国赛二等奖'],'boost':9},
+    'A028': {'keywords':['其他专业竞赛国家级三等奖','蓝桥杯国赛三等奖','数学建模国赛三等奖','智能汽车国赛三等奖','计算机设计国赛三等奖'],'boost':8},
+    'A029': {'keywords':['其他专业竞赛国家级其他奖','蓝桥杯国赛优秀奖','数学建模国赛优秀奖','智能汽车国赛优秀奖'],'boost':6},
+    # 省级
+    'A030': {'keywords':['其他专业竞赛省级最高奖','蓝桥杯省特等奖','蓝桥杯省一等奖','数学建模省最高奖','智能汽车省最高奖','计算机设计省最高奖','蓝桥杯省级最高奖'],'boost':8},
+    'A031': {'keywords':['其他专业竞赛省级二等奖','蓝桥杯省二等奖','数学建模省赛二等奖','智能汽车省二等奖','计算机设计省二等奖'],'boost':7},
+    'A032': {'keywords':['其他专业竞赛省级三等奖','蓝桥杯省三等奖','数学建模省赛三等奖','智能汽车省三等奖','计算机设计省三等奖'],'boost':6},
+    'A033': {'keywords':['其他专业竞赛省级其他奖','蓝桥杯省优秀奖','数学建模省赛优秀奖'],'boost':4},
+    # 校级
+    'A034': {'keywords':['其他专业竞赛校级最高奖','蓝桥杯校一等奖','数学建模校赛最高奖'],'boost':5},
+    'A035': {'keywords':['其他专业竞赛校级二等奖'],'boost':4},
+    'A036': {'keywords':['其他专业竞赛校级三等奖'],'boost':3},
+    'A037': {'keywords':['其他专业竞赛校级其他奖','其他专业竞赛校级参赛'],'boost':2},
+    # 院级
+    'A038': {'keywords':['其他专业竞赛院级一等奖'],'boost':3},
+    'A039': {'keywords':['其他专业竞赛院级二等奖'],'boost':2},
+    'A040': {'keywords':['其他专业竞赛院级三等奖'],'boost':2},
+    'A041': {'keywords':['其他专业竞赛院级其他奖','其他专业竞赛院级参赛'],'boost':1},
 
     # ── 学业: 立项 ──
     'A018': {'keywords':['攀登计划国家级','攀登计划国家立项','国家级攀登计划'],'boost':10},
@@ -1493,6 +1592,202 @@ def extract_regulation_items_llm(text: str) -> list:
                 return items[:50]
     except: pass
     return []
+
+# ══════════════════════════════════════════
+# 成绩单 OCR 课程识别
+# ══════════════════════════════════════════
+
+# 课程类型关键词映射
+COURSE_TYPE_KEYWORDS = {
+    '必修': ['必修', '必修课', '专业必修', '公共必修', '学科必修'],
+    '限选': ['限选', '限选课', '专业限选', '方向限选', '选修(限)', '限定选修'],
+    '任选': ['任选', '任选课', '专业任选', '自由选修', '选修(任)', '任意选修'],
+    '公选': ['公选', '公选课', '公共选修', '通识选修', '通识课', '校选', '校选修'],
+}
+
+# 常见课程名模式（用于区分课程名和无关文字）
+COURSE_NAME_PATTERNS = [
+    # 中文字符+可能的括号内容
+    re.compile(r'^[一-鿿（）()\d\w\s\-+]+$'),
+    # 包含"学"、"概论"、"原理"、"设计"等课程特征词
+    re.compile(r'[一-鿿]+(?:学|概论|原理|设计|实验|实习|实训|课程|英语|数学|物理|化学|计算机|编程|工程)'),
+]
+
+
+def _detect_course_type(text: str) -> str:
+    """从文本中检测课程类型，默认'必修'"""
+    text_lower = text.lower()
+    for ctype, keywords in COURSE_TYPE_KEYWORDS.items():
+        for kw in keywords:
+            if kw in text_lower or kw in text:
+                return ctype
+    return '必修'
+
+
+def _looks_like_course_name(text: str) -> bool:
+    """判断文本是否像课程名"""
+    text = text.strip()
+    if len(text) < 2 or len(text) > 40:
+        return False
+    # 纯数字或纯标点不是课程名
+    if re.match(r'^[\d\s\.\,\;\:\!\?\-—\+]+$', text):
+        return False
+    # 至少包含一个中文字符
+    if not re.search(r'[一-鿿]', text):
+        return False
+    # 不能是常见无关词
+    skip_words = {'成绩单', '学号', '姓名', '班级', '专业', '学院', '学年', '学期',
+                  '序号', '备注', '合计', '平均', '总分', '制表', '审核', '第', '页',
+                  '课程名称', '成绩', '学分', '绩点', '课程类型', '考试', '考查',
+                  '必修课', '选修课', '限选课', '公选课', '教务处', '打印', '日期'}
+    if text.strip() in skip_words:
+        return False
+    return True
+
+
+def _extract_number_fields(tokens: list) -> tuple:
+    """从 token 列表中提取成绩(0-100)和学分(0.5-15)"""
+    numbers = []
+    for t in tokens:
+        try:
+            val = float(t.replace(',', '.').strip())
+            if val > 0:
+                numbers.append(val)
+        except (ValueError, AttributeError):
+            continue
+
+    grade = None
+    credits = None
+
+    for n in numbers:
+        if n <= 15 and n >= 0.5:
+            # 可能是学分
+            if credits is None:
+                credits = n
+        elif 0 < n <= 100:
+            # 可能是成绩
+            if grade is None:
+                grade = n
+        elif 15 < n <= 100:
+            # 只能是成绩
+            if grade is None:
+                grade = n
+
+    # 如果成绩>100不合理，可能顺序反了
+    if grade is not None and grade > 100:
+        grade = None
+    if credits is not None and credits > 15:
+        credits = None
+
+    return grade, credits
+
+
+def extract_courses_from_ocr_text(ocr_text: str) -> list:
+    """
+    从成绩单 OCR 文字中提取课程列表。
+    支持格式：
+    - 表格类：课程名 \t 成绩 \t 学分 \t 课程类型
+    - 行式类：课程名 成绩 学分
+    - 每行一门课
+
+    返回: [{"course_name": str, "grade": float, "credits": float,
+            "course_type": str, "confidence": float}]
+    """
+    if not ocr_text or not ocr_text.strip():
+        return []
+
+    lines = ocr_text.strip().split('\n')
+    results = []
+    seen_names = set()
+
+    for line in lines:
+        line = line.strip()
+        if not line or len(line) < 5:
+            continue
+
+        # 先检测课程类型关键词
+        line_course_type = _detect_course_type(line)
+
+        # 策略1：制表符分隔
+        if '\t' in line:
+            parts = [p.strip() for p in line.split('\t') if p.strip()]
+            if 2 <= len(parts) <= 6:
+                name_candidates = [p for p in parts if _looks_like_course_name(p)]
+                if name_candidates:
+                    course_name = name_candidates[0]
+                    remaining = [p for p in parts if p != course_name]
+                    grade, credits = _extract_number_fields(remaining)
+                    if grade is not None and credits is not None:
+                        conf = 0.85 if len(parts) >= 3 else 0.7
+                        if course_name not in seen_names:
+                            seen_names.add(course_name)
+                            results.append({
+                                'course_name': course_name,
+                                'grade': grade,
+                                'credits': credits,
+                                'course_type': line_course_type,
+                                'confidence': conf,
+                            })
+                        continue
+
+        # 策略2：空格/逗号分隔
+        # 尝试用连续空格分割
+        if '  ' in line:
+            parts = [p.strip() for p in re.split(r'\s{2,}', line) if p.strip() and len(p.strip()) > 1]
+        else:
+            parts = [p.strip() for p in re.split(r'[\s,，、]+', line) if p.strip()]
+
+        # 过滤出可能的字段
+        name_candidates = [p for p in parts if _looks_like_course_name(p)]
+        if not name_candidates:
+            continue
+
+        course_name = name_candidates[0]
+        remaining = [p for p in parts if p != course_name]
+        grade, credits = _extract_number_fields(remaining)
+
+        if grade is not None and credits is not None:
+            conf = 0.75
+            if course_name not in seen_names:
+                seen_names.add(course_name)
+                results.append({
+                    'course_name': course_name,
+                    'grade': grade,
+                    'credits': credits,
+                    'course_type': line_course_type,
+                    'confidence': conf,
+                })
+
+    # 策略3：如果上面都没有识别到，用整行正则匹配
+    if not results:
+        # 匹配模式：中文课程名 + 数字(成绩) + 数字(学分)
+        row_pattern = re.compile(
+            r'([一-鿿（）()\w]{2,20}?)\s*[：:\s]*\s*(\d{1,3}(?:\.\d)?)\s*[分]?\s*[，,\s]+\s*(\d{1,2}(?:\.\d)?)\s*学?分?',
+            re.MULTILINE
+        )
+        for m in row_pattern.finditer(ocr_text):
+            course_name = m.group(1).strip()
+            try:
+                grade = float(m.group(2))
+                credits = float(m.group(3))
+            except ValueError:
+                continue
+            if not _looks_like_course_name(course_name):
+                continue
+            if grade > 100 or credits > 15:
+                continue
+            if course_name not in seen_names:
+                seen_names.add(course_name)
+                results.append({
+                    'course_name': course_name,
+                    'grade': grade,
+                    'credits': credits,
+                    'course_type': _detect_course_type(course_name),
+                    'confidence': 0.65,
+                })
+
+    return results
+
 
 def compute_file_hash(file_path: str) -> str:
     sha = hashlib.sha256()

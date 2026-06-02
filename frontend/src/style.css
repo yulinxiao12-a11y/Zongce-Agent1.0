@@ -1556,6 +1556,57 @@ body {
   margin-top: 24px;
 }
 
+.hero-gpa-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.hero-gpa-label {
+  font-size: 12px;
+  color: rgba(255,255,255,0.6);
+  font-weight: 600;
+}
+
+.hero-gpa-input {
+  width: 72px;
+  padding: 5px 8px;
+  border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 6px;
+  background: rgba(255,255,255,0.1);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: center;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.hero-gpa-input:focus {
+  border-color: rgba(255,255,255,0.55);
+  background: rgba(255,255,255,0.15);
+}
+
+.hero-gpa-input::placeholder {
+  color: rgba(255,255,255,0.3);
+}
+
+.hero-gpa-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(34,197,94,0.2);
+  color: #4ade80;
+}
+
+.hero-gpa-hint {
+  font-size: 10px;
+  color: rgba(255,255,255,0.35);
+}
+
 .score-orbit {
   position: relative;
   display: grid;
@@ -2389,6 +2440,39 @@ body {
 
 .fallback-electronic strong,
 .fallback-electronic span {
+  color: #1d4ed8;
+}
+
+/* 学科竞赛封面 fallback - 国家级蓝色系 */
+.fallback-national {
+  background:
+    radial-gradient(circle at 78% 18%, rgba(255, 255, 255, 0.75), transparent 30%),
+    linear-gradient(135deg, #1e3a8a, #3b82f6);
+}
+.fallback-national strong,
+.fallback-national span {
+  color: #fff;
+}
+
+/* 学科竞赛封面 fallback - 省级橙色系 */
+.fallback-provincial {
+  background:
+    radial-gradient(circle at 78% 18%, rgba(255, 255, 255, 0.65), transparent 30%),
+    linear-gradient(135deg, #c2410c, #fb923c);
+}
+.fallback-provincial strong,
+.fallback-provincial span {
+  color: #fff;
+}
+
+/* 近期活动封面 fallback */
+.fallback-activity {
+  background:
+    radial-gradient(circle at 78% 22%, rgba(96, 165, 250, 0.34), transparent 30%),
+    linear-gradient(135deg, #eff6ff, #dbeafe);
+}
+.fallback-activity strong,
+.fallback-activity span {
   color: #1d4ed8;
 }
 
@@ -3658,6 +3742,26 @@ body {
   margin-top: 16px;
 }
 
+/* Publish file scan upload zone */
+.publish-scan-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100px;
+  border: 2px dashed #d1dbe8;
+  border-radius: 10px;
+  background: #f9fafc;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  padding: 16px;
+  margin-top: 4px;
+}
+.publish-scan-zone:hover { border-color: var(--blue); background: #f0f4ff; }
+.publish-scan-zone input { display: none; }
+.publish-scan-zone strong { font-size: 13px; color: #475569; margin-bottom: 4px; }
+.publish-scan-zone span { font-size: 11px; color: #94a3b8; }
+
 .slide-enter-active,
 .slide-leave-active {
   transition: all 200ms ease;
@@ -4324,4 +4428,626 @@ body {
     width: 100%;
     flex-basis: auto;
   }
+}
+
+/* ====== 星轨探索提交认证弹窗 ====== */
+
+.submit-cert-dialog .el-dialog__body {
+  padding: 0 28px 28px;
+}
+
+.dialog-subtitle {
+  display: block;
+  font-size: 12px;
+  color: #94a3b8;
+  font-weight: 400;
+  margin-top: 2px;
+}
+
+.submit-cert-body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.submit-cert-section h4 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: #1e293b;
+  font-weight: 700;
+}
+
+/* Info cards (read-only catalog data) */
+.cert-info-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.cert-info-item {
+  flex: 1;
+  min-width: 160px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid #edf1f7;
+}
+
+.cert-info-item span {
+  display: block;
+  font-size: 11px;
+  color: #94a3b8;
+  margin-bottom: 4px;
+}
+
+.cert-info-item strong {
+  font-size: 14px;
+  color: #1e293b;
+}
+
+.cert-info-item .cert-score {
+  color: #16a34a;
+  font-size: 16px;
+}
+
+.cert-info-item .cert-rule-ref {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.cert-date-pick {
+  flex: 1;
+  min-width: 180px;
+}
+
+/* Upload zone */
+.cert-upload-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  border: 2px dashed #d1dbe8;
+  border-radius: 12px;
+  background: #f9fafc;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  padding: 20px;
+}
+
+.cert-upload-zone:hover {
+  border-color: #335b92;
+  background: #f0f4ff;
+}
+
+.cert-upload-zone input { display: none; }
+
+.cert-upload-zone strong {
+  font-size: 14px;
+  color: #475569;
+  margin-bottom: 4px;
+}
+
+.cert-upload-zone span {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+/* File list */
+.cert-file-list {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.cert-file-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  background: #f1f5f9;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.cert-file-item b {
+  font-size: 10px;
+  background: #335b92;
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.cert-file-item span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cert-file-item small { color: #94a3b8; }
+
+.cert-file-item button {
+  border: 0;
+  background: none;
+  color: #dc2626;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+/* Action bar: AI button (left) + Submit (right) */
+.submit-cert-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 12px;
+  border-top: 1px solid #edf1f7;
+  gap: 12px;
+}
+
+.cert-actions-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cert-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Small AI button at bottom-left */
+.cert-ai-sm-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 16px;
+  border: 1.5px solid #6366f1;
+  border-radius: 8px;
+  background: #fff;
+  color: #6366f1;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.cert-ai-sm-btn:hover:not(:disabled) {
+  background: #eef2ff;
+  border-color: #4f46e5;
+  color: #4f46e5;
+}
+
+.cert-ai-sm-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Inline confidence display next to AI button */
+.cert-conf-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  border-radius: 8px;
+}
+
+.cert-conf-inline.conf-high { background: #dcfce7; }
+.cert-conf-inline.conf-medium { background: #fef3c7; }
+.cert-conf-inline.conf-low { background: #fee2e2; }
+
+.cert-inline-value {
+  font-size: 20px;
+  font-weight: 900;
+}
+
+.cert-conf-inline.conf-high .cert-inline-value { color: #166534; }
+.cert-conf-inline.conf-medium .cert-inline-value { color: #92400e; }
+.cert-conf-inline.conf-low .cert-inline-value { color: #991b1b; }
+
+.cert-inline-label {
+  font-size: 11px;
+  color: #64748b;
+}
+
+/* Submit button */
+.cert-submit-btn {
+  display: inline-block;
+  min-width: 130px;
+  padding: 9px 24px;
+  border: 0;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #335b92, #284a78);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.cert-submit-btn:hover:not(:disabled) { opacity: 0.9; }
+
+.cert-submit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Match details (collapsible) */
+.cert-match-details {
+  margin-top: 2px;
+}
+
+.cert-match-details > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: #6366f1;
+  font-weight: 600;
+  padding: 4px 0;
+}
+
+.cert-match-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.cert-match-item {
+  background: #f9fafc;
+  border-radius: 8px;
+  padding: 10px 12px;
+  border: 1px solid #edf1f7;
+}
+
+.cert-match-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.cert-match-head strong {
+  font-size: 13px;
+  color: #1e293b;
+}
+
+.cert-conf-pill {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.cert-conf-pill.conf-high { background: #dcfce7; color: #166534; }
+.cert-conf-pill.conf-medium { background: #fef3c7; color: #92400e; }
+.cert-conf-pill.conf-low { background: #fee2e2; color: #991b1b; }
+
+.cert-match-reason {
+  font-size: 11px;
+  color: #64748b;
+  margin: 4px 0;
+  line-height: 1.4;
+}
+
+.cert-match-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.cert-match-meta em {
+  color: #335b92;
+  font-weight: 700;
+  font-style: normal;
+}
+
+.cert-extracted-text {
+  margin-top: 8px;
+}
+
+.cert-extracted-text summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: #6366f1;
+  font-weight: 600;
+}
+
+.cert-extracted-text pre {
+  margin-top: 4px;
+  padding: 10px;
+  background: #f8fafc;
+  border-radius: 6px;
+  font-size: 10px;
+  color: #64748b;
+  white-space: pre-wrap;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+/* Success state */
+.submit-cert-success {
+  text-align: center;
+  padding: 40px 20px;
+}
+
+.cert-success-icon {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: #059669;
+  color: #fff;
+  font-size: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 20px;
+}
+
+.submit-cert-success h3 {
+  margin: 0 0 10px;
+  font-size: 22px;
+  color: #1e293b;
+}
+
+.submit-cert-success p {
+  color: #64748b;
+  margin: 0 0 24px;
+  max-width: 400px;
+  margin-left: auto;
+  margin-right: auto;
+  line-height: 1.6;
+}
+
+/* ====== Academic Year Selector ====== */
+.academic-year-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px 5px 16px;
+  border-radius: 999px;
+  background: #f2f5f8;
+  color: #54657a;
+}
+
+.year-label {
+  color: #54657a;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.academic-year-selector .el-select {
+  width: 130px;
+}
+
+.academic-year-selector .el-input__wrapper {
+  background: #ffffff;
+  border-radius: 999px;
+  box-shadow: none;
+  border: 1px solid #e2e8f0;
+  padding: 2px 12px;
+}
+
+.academic-year-selector .el-input__wrapper:hover { border-color: #cbd5e1; }
+.academic-year-selector .el-input__wrapper.is-focus { border-color: var(--color-primary, #3B82F6); box-shadow: 0 0 0 2px rgba(59,130,246,0.1); }
+
+.academic-year-selector .el-select .el-input__inner {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+  text-align: center;
+}
+
+
+/* ====== Year badge in grade modal header ====== */
+.grade-year-badge {
+  display: inline-block;
+  margin-left: 12px;
+  padding: 4px 14px;
+  background: #1e40af;
+  color: #fff;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+/* ====== Grade Input Dialog ====== */
+.grade-input-dialog .el-dialog__body {
+  padding: 0 28px 28px;
+}
+
+.grade-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-height: 65vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.grade-courses-section h4,
+.grade-ocr-section h4,
+.grade-ocr-results h4,
+.grade-computation-panel h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #1e293b;
+  font-weight: 700;
+}
+
+.grade-course-count {
+  color: #94a3b8;
+  font-weight: 400;
+  font-size: 11px;
+}
+
+.grade-empty-hint {
+  padding: 16px;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 13px;
+  border: 1px dashed #e2e8f0;
+  border-radius: 8px;
+}
+
+/* Course table header / row */
+.grade-course-header {
+  display: grid;
+  grid-template-columns: 2fr 1fr 0.9fr 1.1fr 36px;
+  gap: 8px;
+  padding: 6px 8px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  background: #f8fafc;
+  border-radius: 8px;
+  margin-bottom: 4px;
+  margin-right: 4px;
+}
+
+.grade-course-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 0.9fr 1.1fr 36px;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 0;
+}
+
+.grade-input,
+.grade-select {
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid #dbe3ee;
+  border-radius: 6px;
+  color: #1e293b;
+  background: #fff;
+  font-size: 13px;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.grade-input:focus,
+.grade-select:focus {
+  border-color: #3B82F6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+}
+
+.grade-input.num { text-align: center; }
+
+.grade-remove-btn {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  color: #dc2626;
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+  margin-left: auto;
+}
+
+.grade-remove-btn:hover { background: #fee2e2; }
+
+.grade-add-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 14px;
+  margin-top: 8px;
+  border: 1px dashed #9bb7e8;
+  border-radius: 8px;
+  color: #3B82F6;
+  background: #f0f4ff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s;
+}
+
+.grade-add-btn:hover { background: #e0e9ff; }
+
+/* Hero grade button */
+.hero-grade-btn {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* OCR results */
+.grade-ocr-results { margin-top: -8px; }
+
+.grade-ocr-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid #edf1f7;
+  border-radius: 8px;
+  background: #f9fafc;
+  margin-bottom: 5px;
+}
+
+.gor-name { flex: 1; font-size: 13px; color: #1e293b; font-weight: 600; }
+.gor-grade, .gor-credit, .gor-type { font-size: 12px; color: #64748b; }
+.gor-conf { font-size: 11px; font-weight: 600; }
+.gor-conf.text-green { color: #16a34a; }
+.gor-conf.text-amber { color: #d97706; }
+.gor-conf.text-red { color: #dc2626; }
+
+/* Computation panel */
+.grade-computation-panel {
+  padding: 14px 16px;
+  border: 1px solid #e5ebf2;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.grade-comp-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.grade-comp-item {
+  padding: 8px 10px;
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid #edf1f7;
+}
+
+.grade-comp-item.wide { grid-column: span 2; }
+
+.grade-comp-item span {
+  display: block;
+  font-size: 11px;
+  color: #94a3b8;
+  margin-bottom: 2px;
+}
+
+.grade-comp-item strong {
+  font-size: 17px;
+  color: #1e293b;
+  font-weight: 800;
+}
+
+.text-green { color: #16a34a !important; }
+.text-red { color: #dc2626 !important; }
+
+.grade-error-msg {
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: #fee2e2;
+  color: #991b1b;
+  font-size: 13px;
+  font-weight: 500;
 }

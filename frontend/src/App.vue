@@ -7,7 +7,7 @@ import { api, API_BASE, patchJson, postJson } from './api/client'
 import { useAppStore } from './stores/app'
 
 type DimensionKey = 'moral' | 'academic' | 'arts_sports'
-type OpportunitySource = 'notice' | 'evergreen'
+type OpportunitySource = 'activity' | 'competition' | 'evergreen'  // evergreen=星轨探索目录项
 
 interface Opportunity {
   id: number | string
@@ -103,6 +103,20 @@ interface DashboardSummary {
   goal_gap: number
   ledgers: Array<{ title: string; dimension: DimensionKey; score: number; rule_ref: string }>
   pending_applications: ApplicationItem[]
+  gpa_info?: {
+    score: number | null
+    bonus: number
+    tier: string
+    weighted_average?: number | null
+    academic_base?: number | null
+    from_courses?: boolean
+    course_count?: number
+  }
+  scoring_rules?: {
+    formula: string
+    dimensions: Array<{ key: string; label: string; base: number; cap: number; weight: number }>
+    note: string
+  }
 }
 
 interface TemplateData {
@@ -213,18 +227,50 @@ interface CatalogFilters {
   sections: string[]
 }
 
+// ---- 学业成绩录入 ----
+interface GradeCourse {
+  key: string
+  id?: number
+  course_name: string
+  grade: number | null
+  credits: number | null
+  course_type: string
+  ocr_source: boolean
+}
+
+interface GradeOcrCourse {
+  course_name: string
+  grade: number
+  credits: number
+  course_type: string
+  confidence: number
+  selected: boolean
+}
+
+interface GradeComputation {
+  weighted_average: number
+  academic_base_score: number
+  gpa_bonus: number
+  gpa_tier: string
+  required_courses_avg: number | null
+  required_min_grade: number | null
+  all_required_pass: boolean
+}
+
 const store = useAppStore()
 const route = useRoute()
 const router = useRouter()
 
-const studentTabs = ['星盘总览', '机会大厅', '备赛清单', '星轨探索', '智审中心', '荣誉星墙']
-const adminTabs = ['数据看板', '用户管理', '活动/比赛发布', '综测审核中心', '规则与材料模板']
+const studentTabs = ['星盘总览', '机会大厅', '备赛清单', '星轨探索', '智审中心']
+const adminTabs = ['数据看板', '用户管理', '活动发布管理', '综测审核中心', '规则与材料模板']
 const activeStudentTab = ref('星盘总览')
 const activeAdminTab = ref('数据看板')
-const opportunityMode = ref<OpportunitySource>('notice')
+const opportunityMode = ref<OpportunitySource>('activity')
 const auditQueue = ref('')
 
 const loading = ref(false)
+const gpaEditValue = ref('')
+const gpaSaving = ref(false)
 const summary = ref<DashboardSummary | null>(null)
 const opportunities = ref<Opportunity[]>([])
 const basket = ref<BasketItem[]>([])
@@ -244,6 +290,25 @@ const catalogFilters = ref<CatalogFilters>({ categories: [], levels: [], subcate
 const submittedCatalogIds = ref<Set<string>>(new Set())
 const basketCatalogIds = ref<Set<string>>(new Set())
 const catalogQuery = reactive({ category: '', level: '', section: '', subcategory: '', keyword: '' })
+
+// ---- 学年选择 ----
+const currentAcademicYear = ref('2025-2026')
+const availableAcademicYears = ref<string[]>(['2025-2026', '2024-2025', '2023-2024'])
+
+// ---- 学业成绩录入弹窗 ----
+const showGradeModal = ref(false)
+const gradeModalYear = ref('')
+const gradeModalCourses = ref<GradeCourse[]>([])
+const gradeModalUploadFiles = ref<File[]>([])
+const gradeModalServerFiles = ref<UploadedFile[]>([])
+const gradeModalOcrLoading = ref(false)
+const gradeModalOcrResults = ref<GradeOcrCourse[]>([])
+const gradeModalOcrDone = ref(false)
+const gradeModalSaving = ref(false)
+const gradeModalSaved = ref(false)
+const gradeModalError = ref('')
+const gradeComputation = ref<GradeComputation | null>(null)
+
 const selectedOpportunity = ref<Opportunity | null>(null)
 const selectedDashboardApplication = ref<ApplicationItem | null>(null)
 const selectedAdminUser = ref<AdminUser | null>(null)
@@ -284,13 +349,25 @@ const targetManualForm = reactive({
 })
 const targetManualFiles = ref<UploadedFile[]>([])
 
+// ---- 星轨探索提交认证弹窗 ----
+const showSubmitModal = ref(false)
+const submitModalItem = ref<CatalogExplorerItem | null>(null)
+const submitForm = reactive({ title: '', dimension: '', award_level: '', completion_date: '', score_estimate: 0 })
+const submitModalFiles = ref<File[]>([])
+const submitModalServerFiles = ref<UploadedFile[]>([])
+const submitModalAnalyzing = ref(false)
+const submitModalAnalyzed = ref(false)
+const submitModalAnalysisResult = ref<AnalyzeResult | null>(null)
+const submitModalConfidence = ref(0)
+const submitModalSubmitting = ref(false)
+const submitModalSubmitted = ref(false)
 const honorForm = reactive({ title: '', category: '证书', image_url: '' })
 const honorDropOver = ref(false)
 const honorSelectedFiles = ref<File[]>([])
 const honorEditorVisible = ref(false)
 const honorEditForm = reactive({ id: 0, title: '', category: '证书', image_url: '', visibility: 'private' })
 const publishForm = reactive({
-  source_type: 'notice' as OpportunitySource,
+  source_type: 'activity' as OpportunitySource,
   title: '',
   category: '活动通知',
   dimension: 'moral' as DimensionKey,
@@ -313,6 +390,9 @@ const publishForm = reactive({
 const aiNoticeText = ref('')
 const aiGroupMessage = ref('')
 const aiParsed = ref<Record<string, any> | null>(null)
+const publishScanFiles = ref<File[]>([])
+const publishScanUploading = ref(false)
+const publishScanStatus = ref('')
 const aiExpanded = ref(true)
 const aiParsing = ref(false)
 const publishImages = ref<Array<{ name: string; url: string; localUrl: string }>>([])
@@ -337,11 +417,6 @@ const currentTabs = computed(() => (store.roleMode === 'student' ? studentTabs :
 const currentActiveTab = computed(() => (store.roleMode === 'student' ? activeStudentTab.value : activeAdminTab.value))
 const activeRuleDoc = computed(() => ruleDocs.value.find(doc => doc.is_active) || templates.value?.active_rule_document || null)
 const canViewAdmin = computed(() => store.currentUser?.role === 'admin')
-const evergreenMajorLabel = computed(() => {
-  const department = store.currentUser?.department || summary.value?.user.college || '电子信息'
-  return department.replace('学院', '').replace('与', '')
-})
-
 const filteredOpportunities = computed(() => {
   return opportunities.value.filter(item => {
     if (item.source_type !== opportunityMode.value) return false
@@ -361,18 +436,20 @@ const currentOpportunityCategories = computed(() => {
 })
 
 const opportunityCounts = computed(() => ({
-  notice: opportunities.value.filter(item => item.source_type === 'notice').length,
-  evergreen: opportunities.value.filter(item => item.source_type === 'evergreen').length,
+  activity: opportunities.value.filter(item => item.source_type === 'activity').length,
+  competition: opportunities.value.filter(item => item.source_type === 'competition').length,
 }))
 
 const completedScoreItems = computed(() => {
-  return (summary.value?.ledgers || []).map(item => ({
-    title: item.title,
-    dimension: dimensionDisplayName(item.dimension),
-    child: inferLedgerChild(item.title, item.rule_ref),
-    level: inferLedgerLevel(item.title, item.rule_ref),
-    score: item.score,
-  }))
+  return (summary.value?.ledgers || [])
+    .filter(item => (item as any).kind !== 'base')  // 排除基础分（学业基本分等），只展示加分项
+    .map(item => ({
+      title: item.title,
+      dimension: dimensionDisplayName(item.dimension),
+      child: inferLedgerChild(item.title, item.rule_ref),
+      level: inferLedgerLevel(item.title, item.rule_ref),
+      score: item.score,
+    }))
 })
 
 const categoryScoreDistribution = computed(() => {
@@ -526,13 +603,26 @@ function dimensionDisplayName(dimension: DimensionKey) {
 
 function inferLedgerChild(title: string, ruleRef: string) {
   const text = `${title}${ruleRef}`
-  if (text.includes('志愿') || text.includes('义务劳动')) return '志愿活动'
+  if (text.includes('学生干部') || text.includes('团总支') || text.includes('学生会') || text.includes('班长') || text.includes('团支书') || text.includes('宿舍长') || text.includes('社团') || text.includes('助理')) return '学生干部'
+  if (text.includes('志愿') || text.includes('义务劳动') || text.includes('三下乡')) return '志愿活动'
   if (text.includes('军训')) return '荣誉称号'
   if (text.includes('文明宿舍')) return '文明宿舍'
-  if (text.includes('电子设计') || text.includes('蓝桥杯') || text.includes('竞赛')) return '学科竞赛'
-  if (text.includes('证书')) return '专业证书'
-  if (text.includes('论文')) return '学术论文'
-  if (text.includes('主持') || text.includes('诗歌节') || text.includes('文体') || text.includes('活动')) return '参加活动'
+  if (text.includes('献血') || text.includes('见义勇为')) return '好人好事'
+  if (text.includes('办公室值班') || text.includes('承办')) return '活动组织'
+  if (text.includes('代表大会')) return '代表参会'
+  if (text.includes('班集体') || text.includes('团员')) return '集体荣誉'
+  if (text.includes('处分') || text.includes('缺勤') || text.includes('旷课')) return '扣分'
+  if (text.includes('电子设计') || text.includes('蓝桥杯') || text.includes('竞赛') || text.includes('互联网') || text.includes('大挑') || text.includes('小挑') || text.includes('挑战杯')) return '学科竞赛'
+  if (text.includes('论文') || text.includes('SCI') || text.includes('期刊')) return '学术论文'
+  if (text.includes('专利') || text.includes('软著') || text.includes('著作权')) return '专利软著'
+  if (text.includes('证书') || text.includes('四级') || text.includes('六级') || text.includes('英语') || text.includes('普通话') || text.includes('计算机等级')) return '专业证书'
+  if (text.includes('大创') || text.includes('立项') || text.includes('攀登计划')) return '科研立项'
+  if (text.includes('考研') || text.includes('研究生')) return '考研升学'
+  if (text.includes('均分') || text.includes('单科') || text.includes('学业成绩加分') || text.includes('GPA')) return 'GPA成绩加分'
+  if (text.includes('主持') || text.includes('文艺') || text.includes('运动会') || text.includes('体育') || text.includes('啦啦队') || text.includes('训练') || text.includes('演出')) return '文体活动'
+  if (text.includes('讲座') || text.includes('团学代')) return '参加活动'
+  if (text.includes('刊物') || text.includes('发表')) return '文章发表'
+  if (text.includes('荣誉称号') || text.includes('先进个人') || text.includes('优秀') || text.includes('标兵')) return '荣誉称号'
   return '其他加分'
 }
 
@@ -679,6 +769,10 @@ function opportunityImage(item: Opportunity) {
 }
 
 function opportunityFallbackClass(item: Opportunity) {
+  if (item.source_type === 'competition') {
+    return item.category === '国家级' ? 'fallback-national' : 'fallback-provincial'
+  }
+  if (item.source_type === 'activity') return 'fallback-activity'
   if (item.title.includes('嵌入式') || item.title.includes('芯片')) return 'fallback-chip'
   if (item.title.includes('挑战杯')) return 'fallback-challenge'
   if (item.title.includes('智能汽车')) return 'fallback-smartcar'
@@ -688,24 +782,31 @@ function opportunityFallbackClass(item: Opportunity) {
 }
 
 function opportunityFallbackTitle(item: Opportunity) {
+  if (item.source_type === 'competition') {
+    const title = item.title
+    // 折行策略：在"大赛""竞赛""挑战赛""赛"等处折行
+    return title
+      .replace('全国大学生', '全国大学生\n')
+      .replace('中国大学生', '中国大学生\n')
+      .replace('全国高校', '全国高校\n')
+      .replace('广东省大学生', '广东省大学生\n')
+      .replace('广东省本科', '广东省本科\n')
+  }
   return item.title.replace('全国大学生', '全国大学生\n').replace('中国大学生', '中国大学生\n')
 }
 
 function opportunityFallbackKeyword(item: Opportunity) {
+  if (item.source_type === 'competition') {
+    return item.category || '学科竞赛'
+  }
+  if (item.source_type === 'activity') {
+    return item.category || '近期活动'
+  }
   const title = item.title
   const keywordRules = [
-    '物联网',
-    '数学建模',
-    '电子设计',
-    '计算机设计',
-    '蓝桥杯',
-    '挑战杯',
-    '智能汽车',
-    '信息安全',
-    '创新创业',
-    '学风建设',
-    '社会实践',
-    '助理招新',
+    '物联网', '数学建模', '电子设计', '计算机设计',
+    '蓝桥杯', '挑战杯', '智能汽车', '信息安全', '创新创业',
+    '学风建设', '社会实践', '助理招新',
   ]
   return keywordRules.find(key => title.includes(key)) || item.category || item.dimension_label
 }
@@ -750,10 +851,11 @@ function opportunityAttachments(item: Opportunity) {
 }
 
 async function loadCatalogExplorer() {
+  const year = currentAcademicYear.value
   const [catalogData, userItems, submissions, basketItems] = await Promise.all([
     api<{ items: CatalogExplorerItem[]; filters: CatalogFilters }>('/catalog'),
-    api<{ items: Array<{ catalog_item_id?: string }> }>('/user-items'),
-    api<{ submissions: Array<{ catalog_item_id?: string; status: string }> }>('/submissions'),
+    api<{ items: Array<{ catalog_item_id?: string }> }>(`/user-items?academic_year=${year}`),
+    api<{ submissions: Array<{ catalog_item_id?: string; status: string }> }>(`/submissions?academic_year=${year}`),
     api<BasketItem[]>('/plan-basket'),
   ])
   catalogItems.value = catalogData.items || []
@@ -1019,15 +1121,17 @@ async function deleteAdminUserItem(item: AdminUserItem) {
 
 async function loadAll() {
   loading.value = true
+  const year = currentAcademicYear.value
   try {
-    const [summaryData, opps, basketData, appData, honorData, templateData, docsData] = await Promise.all([
-      api<DashboardSummary>(`/dashboard/summary?user_id=${store.studentId}`),
+    const [summaryData, opps, basketData, appData, honorData, templateData, docsData, yearData] = await Promise.all([
+      api<DashboardSummary>(`/dashboard/summary?user_id=${store.studentId}&academic_year=${year}`),
       api<Opportunity[]>(`/opportunities?user_id=${store.studentId}`),
       api<BasketItem[]>(`/plan-basket?user_id=${store.studentId}`),
-      api<{ submissions: any[] }>('/submissions'),
+      api<{ submissions: any[] }>(`/submissions?academic_year=${year}`),
       api<HonorItem[]>(`/honor-wall?user_id=${store.studentId}`),
       api<TemplateData>('/material-templates'),
       api<RuleDocument[]>('/rule-documents'),
+      api<{ years: string[]; current: string }>('/academic-years'),
     ])
     summary.value = summaryData
     basket.value = mergeBasketRows(basketData)
@@ -1036,6 +1140,11 @@ async function loadAll() {
     honors.value = honorData
     templates.value = templateData
     ruleDocs.value = docsData
+    if (yearData?.years?.length) availableAcademicYears.value = yearData.years
+    // 首次加载才用服务端学年覆盖默认值，后续保持用户选择
+    if (!summary.value && yearData?.current) {
+      currentAcademicYear.value = yearData.current
+    }
     if (canViewAdmin.value) {
       adminApplications.value = []
       const [statsData, adminAppData] = await Promise.all([
@@ -1147,7 +1256,274 @@ function renderCharts() {
 }
 
 watch(() => summary.value, () => nextTick(renderCharts))
-watch(activeStudentTab, tab => { if (tab === '星盘总览') nextTick(renderCharts) })
+watch(activeStudentTab, tab => { if (tab === '星盘总览') { nextTick(renderCharts) } })
+
+async function saveGpa() {
+  const raw = gpaEditValue.value
+  const val = (typeof raw === 'string' ? raw : String(raw ?? '')).trim()
+  if (!val || isNaN(Number(val)) || Number(val) < 0 || Number(val) > 100) {
+    ElMessage.warning('请输入 0-100 的有效分数')
+    return
+  }
+  gpaSaving.value = true
+  try {
+    await api('/profile', { method: 'PUT', body: JSON.stringify({ gpa_score: Number(val) }) })
+    ElMessage.success('均分已保存')
+    await loadAll()
+  } catch (error) {
+    ElMessage.error((error as Error).message)
+  } finally {
+    gpaSaving.value = false
+  }
+}
+
+// ---- 学年切换（watch v-model 驱动） ----
+watch(currentAcademicYear, (newYear, oldYear) => {
+  if (newYear !== oldYear && oldYear !== undefined) loadAll()
+})
+
+function generateAcademicYears(): string[] {
+  const now = new Date()
+  const cy = now.getFullYear()
+  const cm = now.getMonth() + 1
+  const startYear = cm >= 9 ? cy : cy - 1
+  const years: string[] = []
+  for (let i = 0; i < 4; i++) {
+    const y = startYear - i
+    years.push(`${y}-${y + 1}`)
+  }
+  return years
+}
+
+// ---- 学业成绩录入弹窗 ----
+async function openGradeModal() {
+  gradeModalYear.value = currentAcademicYear.value
+  gradeModalUploadFiles.value = []
+  gradeModalServerFiles.value = []
+  gradeModalOcrLoading.value = false
+  gradeModalOcrResults.value = []
+  gradeModalOcrDone.value = false
+  gradeModalSaving.value = false
+  gradeModalSaved.value = false
+  gradeModalError.value = ''
+  gradeComputation.value = null
+
+  try {
+    const data = await api<{
+      courses: Array<{ id: number; course_name: string; grade: number; credits: number; course_type: string; ocr_source: boolean }>
+      weighted_average: number | null; academic_base_score: number | null
+      gpa_bonus: number; gpa_tier: string
+      required_courses_avg: number | null; required_min_grade: number | null
+      all_required_pass: boolean
+    }>(`/course-grades?academic_year=${currentAcademicYear.value}`)
+    gradeModalCourses.value = (data.courses || []).map(c => ({
+      key: crypto.randomUUID(),
+      id: c.id,
+      course_name: c.course_name,
+      grade: c.grade,
+      credits: c.credits,
+      course_type: c.course_type,
+      ocr_source: c.ocr_source || false,
+    }))
+    if (data.weighted_average !== null) {
+      gradeComputation.value = {
+        weighted_average: data.weighted_average,
+        academic_base_score: data.academic_base_score!,
+        gpa_bonus: data.gpa_bonus,
+        gpa_tier: data.gpa_tier,
+        required_courses_avg: data.required_courses_avg,
+        required_min_grade: data.required_min_grade,
+        all_required_pass: data.all_required_pass,
+      }
+    }
+  } catch {
+    gradeModalCourses.value = []
+  }
+  showGradeModal.value = true
+}
+
+function addGradeCourse() {
+  gradeModalCourses.value.push({
+    key: crypto.randomUUID(),
+    course_name: '',
+    grade: null,
+    credits: null,
+    course_type: '必修',
+    ocr_source: false,
+  })
+}
+
+function removeGradeCourse(key: string) {
+  gradeModalCourses.value = gradeModalCourses.value.filter(c => c.key !== key)
+  updateGradeComputation()
+}
+
+function updateGradeComputation() {
+  const courses = gradeModalCourses.value
+  const valid = courses.filter(c => c.grade !== null && c.credits !== null && c.grade > 0 && c.credits > 0)
+  if (valid.length === 0 || courses.some(c => c.grade === null || c.credits === null || !c.course_name)) {
+    gradeComputation.value = null
+    return
+  }
+
+  const totalWeighted = valid.reduce((sum, c) => sum + c.grade! * c.credits!, 0)
+  const totalCredits = valid.reduce((sum, c) => sum + c.credits!, 0)
+  const weightedAvg = Math.round((totalWeighted / totalCredits) * 100) / 100
+  const academicBase = Math.min(80, Math.round(weightedAvg * 0.8 * 100) / 100)
+
+  const required = valid.filter(c => c.course_type === '必修' || c.course_type === '限选')
+  let reqAvg: number | null = null, reqMin: number | null = null, allPass = false
+  if (required.length) {
+    const rw = required.reduce((sum, c) => sum + c.grade! * c.credits!, 0)
+    const rc = required.reduce((sum, c) => sum + c.credits!, 0)
+    reqAvg = Math.round((rw / rc) * 100) / 100
+    reqMin = Math.round(Math.min(...required.map(c => c.grade!)) * 10) / 10
+    allPass = required.every(c => c.grade! >= 70)
+  }
+
+  let bonus = 0, tier = ''
+  if (required.length && reqAvg !== null) {
+    if (reqAvg >= 85 && required.every(c => c.grade! >= 75)) { bonus = 5; tier = '均分≥85且单科≥75' }
+    else if (reqAvg >= 80 && required.every(c => c.grade! >= 70)) { bonus = 3; tier = '均分≥80且单科≥70' }
+    else if (reqAvg >= 75 && required.every(c => c.grade! >= 70)) { bonus = 2; tier = '均分≥75且单科≥70' }
+  }
+
+  gradeComputation.value = {
+    weighted_average: weightedAvg,
+    academic_base_score: academicBase,
+    gpa_bonus: bonus,
+    gpa_tier: tier,
+    required_courses_avg: reqAvg,
+    required_min_grade: reqMin,
+    all_required_pass: allPass,
+  }
+}
+
+function handleGradeModalFileSelect(event: Event) {
+  const input = event.target as HTMLInputElement
+  if (!input.files?.length) return
+  const files = Array.from(input.files).filter(f => {
+    const ext = f.name.split('.').pop()?.toLowerCase() || ''
+    return ['jpg', 'jpeg', 'png', 'bmp', 'webp'].includes(ext)
+  })
+  if (!files.length) { ElMessage.warning('仅支持 JPG、PNG 等图片格式'); return }
+  gradeModalUploadFiles.value = [...gradeModalUploadFiles.value, ...files]
+  input.value = ''
+}
+
+function removeGradeModalFile(idx: number) {
+  gradeModalUploadFiles.value.splice(idx, 1)
+}
+
+async function gradeModalOcrAnalyze() {
+  if (!gradeModalUploadFiles.value.length) { ElMessage.warning('请先上传成绩单图片'); return }
+  gradeModalOcrLoading.value = true
+  gradeModalError.value = ''
+  try {
+    const serverFiles: any[] = []
+    for (const file of gradeModalUploadFiles.value) {
+      const uploaded = await uploadSingleFile(file, 'grade_report')
+      if (uploaded.id) serverFiles.push(uploaded)
+    }
+    gradeModalServerFiles.value = serverFiles
+
+    const result = await postJson<{
+      results: Array<{ file_name: string; courses: Array<{
+        course_name: string; grade: number; credits: number
+        course_type: string; confidence: number
+      }> }>
+    }>('/course-grades/ocr', { uploaded_file_ids: serverFiles.map(f => f.id!) })
+
+    const allCourses: GradeOcrCourse[] = []
+    for (const r of result.results || []) {
+      for (const c of r.courses || []) {
+        allCourses.push({ ...c, selected: true })
+      }
+    }
+    gradeModalOcrResults.value = allCourses
+    gradeModalOcrDone.value = true
+    if (allCourses.length) {
+      ElMessage.success(`OCR识别到 ${allCourses.length} 门课程，请勾选确认后加入列表`)
+    } else {
+      ElMessage.warning('未能从图片中识别出课程信息，请尝试手动添加')
+    }
+  } catch (error) {
+    ElMessage.error(`OCR失败：${(error as Error).message}`)
+  } finally {
+    gradeModalOcrLoading.value = false
+  }
+}
+
+function addOcrCoursesToList() {
+  const selected = gradeModalOcrResults.value.filter(c => c.selected)
+  if (!selected.length) { ElMessage.warning('请先勾选要添加的课程'); return }
+  for (const course of selected) {
+    gradeModalCourses.value.push({
+      key: crypto.randomUUID(),
+      course_name: course.course_name,
+      grade: course.grade,
+      credits: course.credits,
+      course_type: course.course_type,
+      ocr_source: true,
+    })
+  }
+  gradeModalOcrResults.value = []
+  gradeModalOcrDone.value = false
+  updateGradeComputation()
+  ElMessage.success(`已添加 ${selected.length} 门课程`)
+}
+
+async function saveGradeCourses() {
+  const courses = gradeModalCourses.value
+  if (!courses.length) { gradeModalError.value = '请至少添加一门课程'; return }
+  const hasEmpty = courses.some(c => !c.course_name.trim() || c.grade === null || c.credits === null)
+  if (hasEmpty) { gradeModalError.value = '请填写完整的课程信息（名称、成绩、学分）'; return }
+  const badGrade = courses.some(c => c.grade! < 0 || c.grade! > 100)
+  if (badGrade) { gradeModalError.value = '成绩必须在 0-100 之间'; return }
+  const badCredit = courses.some(c => c.credits! <= 0 || c.credits! > 15)
+  if (badCredit) { gradeModalError.value = '学分必须在 0.5-15 之间'; return }
+
+  gradeModalSaving.value = true
+  gradeModalError.value = ''
+  try {
+    const result = await postJson<{ success: boolean; course_count: number; weighted_average: number | null; gpa_bonus: number }>(
+      '/course-grades',
+      {
+        academic_year: gradeModalYear.value,
+        courses: courses.map(c => ({
+          course_name: c.course_name.trim(),
+          grade: c.grade,
+          credits: c.credits,
+          course_type: c.course_type,
+          ocr_source: c.ocr_source,
+        })),
+      }
+    )
+    gradeModalSaved.value = true
+    ElMessage.success(`已保存 ${result.course_count} 门课程成绩，GPA加分 ${result.gpa_bonus > 0 ? '+' + result.gpa_bonus : '0'}`)
+    // 立即刷新仪表盘
+    await loadAll()
+  } catch (error) {
+    gradeModalError.value = (error as Error).message || '保存失败'
+    ElMessage.error(`保存失败：${(error as Error).message}`)
+  } finally {
+    gradeModalSaving.value = false
+  }
+}
+
+function closeGradeModal() {
+  showGradeModal.value = false
+  setTimeout(() => {
+    gradeModalCourses.value = []
+    gradeModalUploadFiles.value = []
+    gradeModalServerFiles.value = []
+    gradeModalOcrResults.value = []
+    gradeModalOcrDone.value = false
+    gradeModalSaved.value = false
+    gradeModalError.value = ''
+    gradeComputation.value = null
+  }, 300)
+}
 
 async function addToBasket(opportunity: Opportunity) {
   const row = await postJson<BasketItem>('/plan-basket', {
@@ -1190,6 +1566,123 @@ function chooseForCert(opportunity: Opportunity) {
 
 function cleanFileTitle(name: string) {
   return name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim().slice(0, 48)
+}
+
+// ===== 星轨探索提交认证弹窗 =====
+
+function openSubmitModal(item: CatalogExplorerItem) {
+  submitModalItem.value = item
+  submitForm.title = item.title
+  submitForm.dimension = item.category === 'sports' ? 'arts_sports' : (item.category === 'moral' || item.category === 'academic' ? item.category : 'academic')
+  submitForm.award_level = item.level || ''
+  submitForm.completion_date = ''
+  submitForm.score_estimate = item.score || 0
+  submitModalFiles.value = []
+  submitModalServerFiles.value = []
+  submitModalAnalyzing.value = false
+  submitModalAnalyzed.value = false
+  submitModalAnalysisResult.value = null
+  submitModalConfidence.value = 0
+  submitModalSubmitting.value = false
+  submitModalSubmitted.value = false
+
+  showSubmitModal.value = true
+}
+
+function handleSubmitModalFileSelect(event: Event) {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files || []).filter(f => {
+    const ext = f.name.split('.').pop()?.toLowerCase() || ''
+    return ['jpg','jpeg','png','bmp','webp','gif','pdf','doc','docx'].includes(ext)
+  })
+  if (!files.length) { input.value = ''; return }
+  const existing = submitModalFiles.value
+  const newFiles = files.filter(f => !existing.some(e => e.name === f.name && e.size === f.size))
+  if (newFiles.length) submitModalFiles.value = [...existing, ...newFiles]
+  input.value = ''
+}
+
+function removeSubmitModalFile(index: number) {
+  submitModalFiles.value.splice(index, 1)
+}
+
+async function submitModalAnalyze() {
+  if (!submitModalFiles.value.length) { ElMessage.warning('请先选择证明材料'); return }
+  submitModalAnalyzing.value = true
+  try {
+    // Upload files
+    const serverFiles: UploadedFile[] = []
+    for (const file of submitModalFiles.value) {
+      const uploaded = await uploadSingleFile(file, 'general')
+      serverFiles.push(uploaded)
+    }
+    submitModalServerFiles.value = serverFiles
+
+    // AI analyze
+    const item = submitModalItem.value!
+    const keyword = `${item.title} ${item.category} ${item.level}`.trim()
+    const analysis = await api<{ results: AnalyzeResult[] }>('/analyze', {
+      method: 'POST',
+      body: JSON.stringify({
+        uploaded_file_ids: serverFiles.map(f => f.id).filter(Boolean),
+        keyword,
+      }),
+    })
+    const rawResults = (analysis as any).results || []
+    rawResults.forEach((r: AnalyzeResult) => { r.matches.forEach((m: any) => fallbackAuditFromText(r, m)) })
+    const merged = mergePackageAnalysisResults(rawResults)
+    const best = merged[0] || null
+    submitModalAnalysisResult.value = best
+    submitModalAnalyzed.value = true
+
+    const bestMatch = best?.matches?.[0]
+    submitModalConfidence.value = bestMatch?.confidence || 0
+    ElMessage.success(`AI分析完成，置信率 ${Math.round(submitModalConfidence.value)}%`)
+  } catch (error) {
+    ElMessage.error(`AI分析失败：${(error as Error).message}`)
+  } finally {
+    submitModalAnalyzing.value = false
+  }
+}
+
+async function submitModalSubmit() {
+  const uploadedIds = submitModalServerFiles.value.map(f => f.id).filter(Boolean) as number[]
+  if (!uploadedIds.length) { ElMessage.warning('请先上传证明材料'); return }
+  submitModalSubmitting.value = true
+  try {
+    const bestMatch = submitModalAnalysisResult.value?.matches?.[0]
+    const item = submitModalItem.value!
+    const response = await postJson<{ status: string; submission_id?: number; proofs_complete?: boolean }>('/submissions', {
+      catalog_item_id: bestMatch?.id || item.id,
+      uploaded_file_ids: uploadedIds,
+      completion_date: submitForm.completion_date || undefined,
+      ai_confidence: submitModalConfidence.value,
+      ai_decision: submitModalConfidence.value >= 80 ? 'high' : (submitModalConfidence.value >= 60 ? 'medium' : 'low'),
+      ai_reason: bestMatch?.reason || '',
+      ai_audit: bestMatch?.audit || {},
+    })
+    submitModalSubmitted.value = true
+    ElMessage.success('已提交审核，等待管理端终审')
+    await loadAll()
+  } catch (error) {
+    ElMessage.error((error as Error).message)
+  } finally {
+    submitModalSubmitting.value = false
+  }
+}
+
+function closeSubmitModal() {
+  showSubmitModal.value = false
+  setTimeout(() => {
+    submitModalItem.value = null
+    submitModalFiles.value = []
+    submitModalServerFiles.value = []
+    submitModalAnalyzed.value = false
+    submitModalAnalysisResult.value = null
+    submitModalConfidence.value = 0
+    submitModalSubmitted.value = false
+  
+  }, 300)
 }
 
 async function uploadSingleFile(file: File, proofType = 'general') {
@@ -1429,6 +1922,69 @@ function selectDashboardApplication(item: ApplicationItem) {
   selectedDashboardApplication.value = item
 }
 
+function handlePublishScanFileSelect(event: Event) {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files || []).filter(f => {
+    const ext = f.name.split('.').pop()?.toLowerCase() || ''
+    return ['jpg','jpeg','png','bmp','webp','gif','pdf','doc','docx'].includes(ext)
+  })
+  if (!files.length) { input.value = ''; return }
+  const existing = publishScanFiles.value
+  const added = files.filter(f => !existing.some(e => e.name === f.name && e.size === f.size))
+  if (added.length) publishScanFiles.value = [...existing, ...added]
+  input.value = ''
+}
+
+function removePublishScanFile(index: number) {
+  publishScanFiles.value.splice(index, 1)
+}
+
+async function publishAiScan() {
+  if (!publishScanFiles.value.length) { ElMessage.warning('请先选择需要扫描的文件'); return }
+  publishScanUploading.value = true
+  publishScanStatus.value = '⏳ 上传文件中...'
+  try {
+    // Upload
+    const form = new FormData()
+    publishScanFiles.value.forEach(f => form.append('files', f))
+    const uploadResult = await api<{ files: Array<{ id: number; original_filename: string }> }>('/upload', { method: 'POST', body: form })
+    const fileIds = ((uploadResult as any).files || []).map((f: any) => f.id).filter(Boolean)
+    if (!fileIds.length) { ElMessage.error('文件上传失败'); return }
+
+    // AI analyze
+    publishScanStatus.value = '🔍 AI正在扫描识别文字...'
+    const analysis = await api<{ results: Array<{ extracted_text: string; extracted_text_full?: string; filename: string }> }>('/analyze', {
+      method: 'POST',
+      body: JSON.stringify({ uploaded_file_ids: fileIds, keyword: '' }),
+    })
+    const results = (analysis as any).results || []
+    const allText = results.map((r: any) => r.extracted_text_full || r.extracted_text || '').filter(Boolean).join('\n\n')
+    if (!allText.trim()) { ElMessage.warning('未能从文件中提取到有效文字'); return }
+
+    // Fill form
+    const titleGuess = allText.split(/[\n\r]+/).find((l: string) => l.length > 6 && l.length < 100) || publishScanFiles.value[0]?.name?.replace(/\.[^.]+$/, '') || ''
+    publishForm.title = titleGuess.slice(0, 160)
+    publishForm.description = allText.slice(0, 2000)
+
+    // Date detection
+    const dm = allText.match(/(20\d{2}[年\-\/\.]\d{1,2}[月\-\/\.]\d{1,2}[日号])/)
+    if (dm) publishForm.deadline = dm[1]
+
+    // Location detection
+    const lm = allText.match(/(?:地点|地址|教室|报告厅|线上)[：:]\s*([^\n]{3,40})/)
+    if (lm) publishForm.location = lm[1]
+
+    aiParsed.value = { title: publishForm.title, description: publishForm.description, autoFilled: true }
+    publishScanStatus.value = `✅ 已扫描 ${results.length} 个文件并填充，请核对 `
+    publishScanFiles.value = []
+    ElMessage.success('AI扫描完成，请核对表单信息')
+  } catch (error) {
+    ElMessage.error(`AI扫描失败：${(error as Error).message}`)
+  } finally {
+    publishScanUploading.value = false
+  }
+}
+
 async function runAiParse() {
   const rawText = [aiNoticeText.value, aiGroupMessage.value].map(item => item.trim()).filter(Boolean).join('\n\n')
   if (!rawText) {
@@ -1475,7 +2031,7 @@ async function publishOpportunity() {
     attachments: [],
     images: publishImages.value.map(item => item.url),
     group_qr_url: publishQr.value?.url || publishForm.group_qr_url,
-    roi_score: publishForm.source_type === 'evergreen' ? 4.2 : 3.8,
+    roi_score: 3.8,
   })
   ElMessage.success('已发布到机会大厅')
   Object.assign(publishForm, {
@@ -2126,6 +2682,12 @@ onMounted(async () => {
       <header class="app-topbar">
         <h1>{{ store.roleMode === 'student' ? activeStudentTab : activeAdminTab }}</h1>
         <div class="topbar-actions">
+          <div v-if="store.roleMode === 'student'" class="academic-year-selector">
+            <span class="year-label">学年</span>
+            <el-select v-model="currentAcademicYear" size="default">
+              <el-option v-for="y in availableAcademicYears" :key="y" :label="y" :value="y" />
+            </el-select>
+          </div>
           <button class="bell-btn" aria-label="消息">
             <span class="bell-dot">1</span>
             ●
@@ -2227,8 +2789,7 @@ onMounted(async () => {
               <div v-if="item.note" class="catalog-note-line">ⓘ {{ item.note }}</div>
               <div class="catalog-card-actions">
                 <span v-if="submittedCatalogIds.has(item.id)" class="catalog-submitted">已提交/已通过</span>
-                <span v-else-if="basketCatalogIds.has(item.id)" class="catalog-submitted">已添加</span>
-                <button v-else class="btn-primary-sm" @click="addCatalogItem(item)">+ 添加备赛清单</button>
+                <button v-else class="btn-primary-sm" @click="openSubmitModal(item)">提交认证</button>
               </div>
             </article>
           </div>
@@ -2243,6 +2804,7 @@ onMounted(async () => {
               <div class="hero-actions">
                 <button class="btn-primary-sm" @click="activeStudentTab = '机会大厅'">去找加分机会</button>
                 <button class="btn-ghost" @click="activeStudentTab = '智审中心'">提交材料认证</button>
+                <button class="btn-ghost" @click="openGradeModal">编辑学业成绩</button>
               </div>
             </div>
             <div class="score-orbit">
@@ -2318,11 +2880,11 @@ onMounted(async () => {
 
         <section v-show="activeStudentTab === '机会大厅'" class="page-stack">
           <div class="hall-tabs">
-            <button :class="{ active: opportunityMode === 'notice' }" @click="opportunityMode = 'notice'">
-              近期通知 <span>{{ opportunityCounts.notice }}</span>
+            <button :class="{ active: opportunityMode === 'activity' }" @click="opportunityMode = 'activity'">
+              近期活动 <span>{{ opportunityCounts.activity }}</span>
             </button>
-            <button :class="{ active: opportunityMode === 'evergreen' }" @click="opportunityMode = 'evergreen'">
-              常驻赛事 <span>{{ opportunityCounts.evergreen }}</span>
+            <button :class="{ active: opportunityMode === 'competition' }" @click="opportunityMode = 'competition'">
+              学科竞赛 <span>{{ opportunityCounts.competition }}</span>
             </button>
           </div>
 
@@ -2337,7 +2899,7 @@ onMounted(async () => {
               </div>
             </div>
             <div class="filter-row">
-              <span class="filter-label">{{ opportunityMode === 'notice' ? '活动类型:' : '赛事类型:' }}</span>
+              <span class="filter-label">{{ opportunityMode === 'activity' ? '活动类型:' : '竞赛级别:' }}</span>
               <div class="filter-options">
                 <button :class="{ active: !filters.category }" @click="filters.category = ''">全部</button>
                 <button
@@ -2365,8 +2927,8 @@ onMounted(async () => {
           </div>
 
           <div class="section-header">
-            <h2>{{ opportunityMode === 'notice' ? '学院/学校近期通知' : `${evergreenMajorLabel}方向常驻备赛库` }}</h2>
-            <p>{{ opportunityMode === 'notice' ? '只展示近期由学校或学院发布的活动通知。' : 'AI已根据当前账号专业画像筛选长期赛事；最终能否加分仍以细则和通知审核为准。' }}</p>
+            <h2>{{ opportunityMode === 'activity' ? '近期活动' : '学科竞赛目录' }}</h2>
+            <p>{{ opportunityMode === 'activity' ? '展示由管理员发布的近期校园活动通知。' : '共收录65项官方认证学科竞赛，含国家级A类和省级A类赛事。' }}</p>
           </div>
 
           <div class="activity-grid">
@@ -2813,7 +3375,8 @@ onMounted(async () => {
           </div>
         </section>
 
-        <section v-show="activeAdminTab === '活动/比赛发布'" class="publish-page">
+        <section v-show="activeAdminTab === '活动发布管理'" class="publish-page">
+          <!-- AI 文件上传扫描区（可折叠） -->
           <div class="ai-section" :class="{ expanded: aiExpanded }">
             <button class="ai-header" @click="aiExpanded = !aiExpanded">
               <div class="ai-header-left">
@@ -2824,35 +3387,36 @@ onMounted(async () => {
                 </div>
               </div>
               <div class="ai-header-right">
-                <span class="ai-subtitle" v-if="!aiExpanded">{{ aiParsed ? '已解析，可继续核对表单' : '粘贴通知一键填表' }}</span>
+                <span class="ai-subtitle" v-if="!aiExpanded">{{ aiParsed ? '已解析，可继续核对表单' : '上传文件，AI自动扫描填充' }}</span>
                 <span class="chevron">{{ aiExpanded ? '⌃' : '⌄' }}</span>
               </div>
             </button>
-
             <Transition name="slide">
               <div v-if="aiExpanded" class="ai-body">
-                <p class="ai-hint">粘贴公众号文章、群通知或比赛通知，AI 帮你先自动填表，发布前必须人工核对。</p>
+                <p class="ai-hint">上传通知截图/PDF/Word文件，AI自动扫描文字并填充下方表单，发布前须人工核对。</p>
                 <div class="form-row">
-                  <label class="form-label">通知/公众号文章</label>
-                  <textarea
-                    v-model="aiNoticeText"
-                    class="form-input form-textarea"
-                    placeholder="粘贴活动通知、公众号文章正文或 OCR 后的文字内容..."
-                    rows="4"
-                  />
+                  <label class="form-label">📎 上传文件扫描（截图/PDF/Word）</label>
+                  <label class="publish-scan-zone" @dragover.prevent @drop.prevent="(e) => { e.preventDefault(); const dt = (e as DragEvent).dataTransfer; if (dt) { const dropped = Array.from(dt.files).filter((f: any) => { const ext = (f.name as string).split('.').pop()?.toLowerCase() || ''; return ['jpg','jpeg','png','bmp','webp','gif','pdf','doc','docx'].includes(ext) }); const ex = publishScanFiles; const nf = dropped.filter((f: any) => !ex.some((ef: any) => ef.name === f.name && ef.size === f.size)); if (nf.length) publishScanFiles = [...ex, ...nf] } }">
+                    <input type="file" multiple accept=".jpg,.jpeg,.png,.bmp,.webp,.gif,.pdf,.doc,.docx" @change="handlePublishScanFileSelect" />
+                    <strong>点击或拖拽文件到此处</strong>
+                    <span>支持 JPG、PNG、PDF、DOCX 格式</span>
+                  </label>
+                  <div v-if="publishScanFiles.length" class="cert-file-list">
+                    <div v-for="(f, i) in publishScanFiles" :key="`ps-${f.name}-${i}`" class="cert-file-item">
+                      <b>{{ materialFileIcon(f.name) }}</b>
+                      <span>{{ f.name }}</span>
+                      <small>{{ (f.size / 1024).toFixed(1) }} KB</small>
+                      <button @click="removePublishScanFile(i)">x</button>
+                    </div>
+                  </div>
+                  <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+                    <button class="btn-primary ai-parse-btn" :disabled="!publishScanFiles.length || publishScanUploading" @click="publishAiScan">
+                      <span v-if="publishScanUploading">⏳ AI 正在扫描识别...</span>
+                      <span v-else>🤖 AI 扫描文件并填充表单</span>
+                    </button>
+                    <span v-if="publishScanStatus" style="font-size:11px;color:#64748b;">{{ publishScanStatus }}</span>
+                  </div>
                 </div>
-                <div class="form-row">
-                  <label class="form-label">群消息补充 <span class="optional">（选填）</span></label>
-                  <textarea
-                    v-model="aiGroupMessage"
-                    class="form-input form-textarea"
-                    placeholder="粘贴报名群、补充说明、转发文案等..."
-                    rows="2"
-                  />
-                </div>
-                <button class="btn-primary ai-parse-btn" :disabled="aiParsing || !aiNoticeText.trim()" @click="runAiParse">
-                  {{ aiParsing ? '解析中...' : 'AI 智能解析' }}
-                </button>
               </div>
             </Transition>
           </div>
@@ -2884,8 +3448,7 @@ onMounted(async () => {
                     <label class="form-label">展示区 <span class="text-danger">*</span></label>
                     <div class="select-wrap">
                       <select v-model="publishForm.source_type" class="form-input">
-                        <option value="notice">近期通知</option>
-                        <option value="evergreen">常驻赛事</option>
+                        <option value="activity">近期活动</option>
                       </select>
                       <span class="select-arrow">⌄</span>
                     </div>
@@ -3277,6 +3840,128 @@ onMounted(async () => {
       </div>
     </el-dialog>
 
+    <!-- ====== 星轨探索：提交认证弹窗 ====== -->
+    <el-dialog v-model="showSubmitModal" width="620px" class="submit-cert-dialog" @close="closeSubmitModal">
+      <template #header>
+        <strong>提交认证</strong>
+        <span class="dialog-subtitle">{{ submitModalItem?.title }}</span>
+      </template>
+
+      <!-- 未提交状态 -->
+      <div v-if="!submitModalSubmitted" class="submit-cert-body">
+
+        <!-- 认证项信息（只读，来自catalog） -->
+        <div class="submit-cert-section">
+          <h4>认证项目</h4>
+          <div class="cert-info-cards">
+            <div class="cert-info-item">
+              <span>项目名称</span>
+              <strong>{{ submitModalItem?.title }}</strong>
+            </div>
+            <div class="cert-info-item">
+              <span>评价维度</span>
+              <strong>{{ submitForm.dimension === 'moral' ? '思想品德' : submitForm.dimension === 'academic' ? '学业表现' : submitForm.dimension === 'arts_sports' ? '文体表现' : submitForm.dimension }}</strong>
+            </div>
+            <div class="cert-info-item">
+              <span>获奖/认证等级</span>
+              <strong>{{ submitForm.award_level || submitModalItem?.level }}</strong>
+            </div>
+            <div class="cert-info-item">
+              <span>预估加分</span>
+              <strong class="cert-score">+{{ submitForm.score_estimate || submitModalItem?.score }} 分</strong>
+            </div>
+            <div class="cert-info-item">
+              <span>当前适用细则</span>
+              <strong class="cert-rule-ref">{{ activeRuleDoc?.name || '2025年7月电信学院综测细则（公示版）' }}</strong>
+            </div>
+            <label class="cert-info-item cert-date-pick">
+              <span>完成/获证日期（选填）</span>
+              <el-date-picker v-model="submitForm.completion_date" type="date" placeholder="选择日期" value-format="YYYY-MM-DD" size="small" style="width:100%" />
+            </label>
+          </div>
+        </div>
+
+        <!-- 上传证明材料 -->
+        <div class="submit-cert-section">
+          <h4>上传证明材料</h4>
+          <label class="cert-upload-zone" @dragover.prevent @drop.prevent="(e) => { e.preventDefault(); const dt = (e as DragEvent).dataTransfer; if (dt) { const dropped = Array.from(dt.files).filter((f: any) => { const ext = (f.name as string).split('.').pop()?.toLowerCase() || ''; return ['jpg','jpeg','png','bmp','webp','gif','pdf','doc','docx'].includes(ext) }); const ex = submitModalFiles; const nf = dropped.filter((f: any) => !ex.some((ef: any) => ef.name === f.name && ef.size === f.size)); if (nf.length) submitModalFiles = [...ex, ...nf] } }">
+            <input type="file" multiple accept=".jpg,.jpeg,.png,.bmp,.webp,.pdf,.doc,.docx" @change="handleSubmitModalFileSelect" />
+            <strong>点击或拖拽文件到此处</strong>
+            <span>支持 JPG、PNG、PDF、DOCX 格式</span>
+          </label>
+          <div v-if="submitModalFiles.length" class="cert-file-list">
+            <div v-for="(f, i) in submitModalFiles" :key="`${f.name}-${i}`" class="cert-file-item">
+              <b>{{ materialFileIcon(f.name) }}</b>
+              <span>{{ f.name }}</span>
+              <small>{{ (f.size / 1024).toFixed(1) }} KB</small>
+              <button @click="removeSubmitModalFile(i)">x</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 底部操作栏：AI分析（左下角）+ 提交（右下角） -->
+        <div class="submit-cert-actions">
+          <div class="cert-actions-left">
+            <button
+              class="cert-ai-sm-btn"
+              :disabled="!submitModalFiles.length || submitModalAnalyzing"
+              @click="submitModalAnalyze"
+            >
+              <span v-if="submitModalAnalyzing">⏳ 分析中...</span>
+              <span v-else-if="submitModalAnalyzed">🔄 重新分析</span>
+              <span v-else>🤖 AI 审核</span>
+            </button>
+            <!-- AI 置信率小环（分析完成后显示在按钮旁） -->
+            <div v-if="submitModalAnalyzed" :class="['cert-conf-inline', submitModalConfidence >= 85 ? 'conf-high' : submitModalConfidence >= 60 ? 'conf-medium' : 'conf-low']">
+              <span class="cert-inline-value">{{ Math.round(submitModalConfidence) }}%</span>
+              <span class="cert-inline-label">AI置信率</span>
+            </div>
+          </div>
+          <div class="cert-actions-right">
+            <el-button @click="closeSubmitModal">取消</el-button>
+            <button
+              class="cert-submit-btn"
+              :disabled="submitModalSubmitting || !submitModalServerFiles.length"
+              @click="submitModalSubmit"
+            >
+              {{ submitModalSubmitting ? '提交中...' : '提交审核' }}
+            </button>
+          </div>
+        </div>
+
+        <!-- AI 匹配详情（折叠，分析完成后显示） -->
+        <details v-if="submitModalAnalyzed && submitModalAnalysisResult?.matches?.length" class="cert-match-details">
+          <summary>AI 审核详情 — 匹配到 {{ submitModalAnalysisResult.matches.length }} 个综测项目</summary>
+          <div class="cert-match-list">
+            <div v-for="match in submitModalAnalysisResult.matches.slice(0, 5)" :key="match.id" class="cert-match-item">
+              <div class="cert-match-head">
+                <strong>{{ match.title }}</strong>
+                <span :class="['cert-conf-pill', matchConfidenceClass(match.confidence)]">{{ Math.round(match.confidence) }}%</span>
+              </div>
+              <p class="cert-match-reason">{{ match.reason }}</p>
+              <div class="cert-match-meta">
+                <span>{{ match.category_name || match.category }}</span>
+                <span>{{ match.level }}</span>
+                <em>+{{ match.score }}分</em>
+              </div>
+            </div>
+          </div>
+          <details v-if="submitModalAnalysisResult.extracted_text" class="cert-extracted-text" style="margin-top:8px">
+            <summary>AI 提取的文本内容</summary>
+            <pre>{{ submitModalAnalysisResult.extracted_text.slice(0, 500) }}</pre>
+          </details>
+        </details>
+      </div>
+
+      <!-- 提交成功状态 -->
+      <div v-else class="submit-cert-success">
+        <div class="cert-success-icon">&#10003;</div>
+        <h3>提交成功</h3>
+        <p>您的认证材料已提交，AI 审核置信率 {{ Math.round(submitModalConfidence) }}%，管理员将进行最终审核并入账。</p>
+        <el-button type="primary" @click="closeSubmitModal">完成</el-button>
+      </div>
+    </el-dialog>
+
     <el-dialog v-model="honorEditorVisible" width="520px" class="honor-edit-dialog">
       <template #header>
         <strong>编辑荣誉展示</strong>
@@ -3300,6 +3985,137 @@ onMounted(async () => {
         <el-button type="danger" plain @click="deleteHonor">移除</el-button>
         <el-button @click="honorEditorVisible = false">取消</el-button>
         <el-button type="primary" @click="saveHonorEdit">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ====== 学业成绩录入弹窗 ====== -->
+    <el-dialog v-model="showGradeModal" width="780px" class="grade-input-dialog" :close-on-click-modal="false" @close="closeGradeModal">
+      <template #header>
+        <strong>学业成绩录入</strong>
+        <span class="grade-year-badge">📅 {{ gradeModalYear }} 学年</span>
+      </template>
+
+      <div v-if="!gradeModalSaved" class="grade-modal-body">
+
+        <!-- 成绩单上传识别区 -->
+        <div class="grade-ocr-section">
+          <h4>上传成绩单自动识别（可选）</h4>
+          <label class="cert-upload-zone" style="margin-bottom:6px;"
+            @dragover.prevent @drop.prevent="(e) => { e.preventDefault(); const dt = e.dataTransfer; if (dt?.files) handleGradeModalFileSelect({ target: { files: dt.files, value: '' } } as any) }">
+            <input type="file" multiple accept=".jpg,.jpeg,.png,.bmp,.webp" style="display:none;" @change="handleGradeModalFileSelect" />
+            <strong>📎 点击或拖拽成绩单截图</strong>
+            <span>支持 JPG、PNG 格式，将自动 OCR 识别课程和成绩</span>
+          </label>
+          <div v-if="gradeModalUploadFiles.length" class="cert-file-list">
+            <div v-for="(f, i) in gradeModalUploadFiles" :key="i" class="cert-file-item">
+              <b>IMG</b>
+              <span>{{ f.name }}</span>
+              <small>{{ (f.size / 1024).toFixed(1) }} KB</small>
+              <button @click="removeGradeModalFile(i)">x</button>
+            </div>
+          </div>
+          <button v-if="gradeModalUploadFiles.length && !gradeModalOcrDone"
+            class="cert-ai-sm-btn" :disabled="gradeModalOcrLoading"
+            @click="gradeModalOcrAnalyze" style="margin-top:8px;">
+            <span v-if="gradeModalOcrLoading">⏳ OCR识别中...</span>
+            <span v-else>🤖 OCR识别</span>
+          </button>
+        </div>
+
+        <!-- OCR识别结果 -->
+        <div v-if="gradeModalOcrDone && gradeModalOcrResults.length" class="grade-ocr-results">
+          <h4>OCR识别结果 <span class="grade-course-count">({{ gradeModalOcrResults.length }} 门)</span></h4>
+          <div v-for="(ocr, i) in gradeModalOcrResults" :key="i" class="grade-ocr-row">
+            <el-checkbox v-model="ocr.selected" />
+            <span class="gor-name">{{ ocr.course_name }}</span>
+            <span class="gor-grade">{{ ocr.grade }}分</span>
+            <span class="gor-credit">{{ ocr.credits }}学分</span>
+            <span class="gor-type">{{ ocr.course_type }}</span>
+            <span :class="['gor-conf', ocr.confidence >= 0.8 ? 'text-green' : ocr.confidence >= 0.6 ? 'text-amber' : 'text-red']">置信度 {{ Math.round(ocr.confidence * 100) }}%</span>
+          </div>
+          <button class="btn-ghost" @click="addOcrCoursesToList" style="margin-top:8px;">将选中课程加入列表</button>
+        </div>
+
+        <!-- 课程列表 -->
+        <div class="grade-courses-section">
+          <h4>课程成绩 <span class="grade-course-count">({{ gradeModalCourses.length }} 门)</span></h4>
+          <div class="grade-course-header">
+            <span class="gch-name">课程名称</span>
+            <span class="gch-grade">成绩</span>
+            <span class="gch-credit">学分</span>
+            <span class="gch-type">课程类型</span>
+            <span class="gch-action"></span>
+          </div>
+          <div v-if="!gradeModalCourses.length" class="grade-empty-hint">暂无课程，请手动添加或上传成绩单自动识别</div>
+          <div v-for="course in gradeModalCourses" :key="course.key" class="grade-course-row">
+            <input v-model="course.course_name" class="grade-input name" placeholder="如：高等数学" @input="updateGradeComputation" />
+            <input v-model.number="course.grade" type="number" min="0" max="100" class="grade-input num" placeholder="0-100" @input="updateGradeComputation" />
+            <input v-model.number="course.credits" type="number" min="0.5" max="15" step="0.5" class="grade-input num" placeholder="学分" @input="updateGradeComputation" />
+            <select v-model="course.course_type" class="grade-select" @change="updateGradeComputation">
+              <option value="必修">必修</option>
+              <option value="限选">限选</option>
+              <option value="任选">任选</option>
+              <option value="公选">公选</option>
+            </select>
+            <button class="grade-remove-btn" @click="removeGradeCourse(course.key)" title="删除">✕</button>
+          </div>
+          <button class="grade-add-btn" @click="addGradeCourse">+ 添加科目</button>
+        </div>
+
+        <!-- 实时计算面板 -->
+        <div v-if="gradeComputation" class="grade-computation-panel">
+          <h4>实时计算</h4>
+          <div class="grade-comp-grid">
+            <div class="grade-comp-item">
+              <span>加权平均分</span>
+              <strong>{{ gradeComputation.weighted_average }}</strong>
+            </div>
+            <div class="grade-comp-item">
+              <span>学业基本分（满分80）</span>
+              <strong>{{ gradeComputation.academic_base_score }}</strong>
+            </div>
+            <div class="grade-comp-item">
+              <span>GPA加分</span>
+              <strong :class="gradeComputation.gpa_bonus > 0 ? 'text-green' : ''">
+                {{ gradeComputation.gpa_bonus > 0 ? '+' + gradeComputation.gpa_bonus : '0' }}
+              </strong>
+            </div>
+            <div class="grade-comp-item">
+              <span>必修限选均分</span>
+              <strong>{{ gradeComputation.required_courses_avg ?? '—' }}</strong>
+            </div>
+            <div class="grade-comp-item">
+              <span>必修限选最低分</span>
+              <strong :class="!gradeComputation.all_required_pass ? 'text-red' : ''">
+                {{ gradeComputation.required_min_grade ?? '—' }}
+              </strong>
+            </div>
+            <div class="grade-comp-item wide">
+              <span>GPA加分档位</span>
+              <strong :class="gradeComputation.gpa_bonus > 0 ? 'text-green' : ''">
+                {{ gradeComputation.gpa_tier || '未达标' }}
+              </strong>
+            </div>
+          </div>
+        </div>
+
+        <!-- 错误提示 -->
+        <div v-if="gradeModalError" class="grade-error-msg">{{ gradeModalError }}</div>
+      </div>
+
+      <!-- 保存成功状态 -->
+      <div v-else class="submit-cert-success">
+        <div class="cert-success-icon">&#10003;</div>
+        <h3>成绩已保存</h3>
+        <p v-if="gradeComputation">{{ gradeModalYear }} 学年共 {{ gradeModalCourses.length }} 门课程，加权平均分 {{ gradeComputation.weighted_average }}，学业基本分 {{ gradeComputation.academic_base_score }}，GPA 加分 {{ gradeComputation.gpa_bonus > 0 ? '+' + gradeComputation.gpa_bonus : '0' }}。</p>
+        <el-button type="primary" @click="closeGradeModal">完成</el-button>
+      </div>
+
+      <template v-if="!gradeModalSaved" #footer>
+        <el-button @click="closeGradeModal">取消</el-button>
+        <button class="cert-submit-btn" :disabled="gradeModalSaving || !gradeModalCourses.length" @click="saveGradeCourses">
+          {{ gradeModalSaving ? '保存中...' : '💾 保存成绩' }}
+        </button>
       </template>
     </el-dialog>
   </main>
