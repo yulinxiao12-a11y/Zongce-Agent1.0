@@ -269,6 +269,8 @@ const opportunityMode = ref<OpportunitySource>('activity')
 const auditQueue = ref('')
 
 const loading = ref(false)
+const gpaEditValue = ref('')
+const gpaSaving = ref(false)
 const summary = ref<DashboardSummary | null>(null)
 const opportunities = ref<Opportunity[]>([])
 const basket = ref<BasketItem[]>([])
@@ -325,6 +327,7 @@ const filters = reactive({
 
 const materialParsing = ref(false)
 const materialSubmitMode = ref<'match' | 'targeted'>('match')
+const showAuditProgressModal = ref(false)
 const materialSelectedFiles = ref<File[]>([])
 const materialServerFiles = ref<UploadedFile[]>([])
 const materialAnalysisResults = ref<AnalyzeResult[]>([])
@@ -392,6 +395,7 @@ const publishScanFiles = ref<File[]>([])
 const publishScanUploading = ref(false)
 const publishScanStatus = ref('')
 const aiExpanded = ref(true)
+const aiParsing = ref(false)
 const publishImages = ref<Array<{ name: string; url: string; localUrl: string }>>([])
 const publishQr = ref<{ name: string; url: string; localUrl: string } | null>(null)
 const publishDragOver = ref(false)
@@ -689,6 +693,25 @@ function sourceConfidence(value: number) {
   return value > 1 ? value / 100 : value
 }
 
+// ── 审核进度弹窗数据 ──
+const auditProgressItems = computed(() => {
+  const list = summary.value?.pending_applications || []
+  return (list as any[]).map((item: any) => ({
+    id: item.id,
+    title: item.title || item.opportunity_title || '未命名',
+    category: item.dimension || 'academic',
+    category_name: item.dimension === 'arts_sports' ? '文体表现' : item.dimension === 'moral' ? '品德行为表现' : '学业表现',
+    level: item.award_level || item.level || '-',
+    score: Number(item.suggested_score || 0),
+    confidence: Number(item.ai_confidence > 1 ? item.ai_confidence : (item.ai_confidence || 0) * 100),
+    status: item.status || 'pending',
+    files: (item.files || []) as Array<{ id: number; name: string; filename?: string; url: string; view_url?: string }>,
+    ai_reason: (item.ai_review?.recognized_text || item.ai_reason || ''),
+    risk_tags: (item.risk_tags || []) as string[],
+    review_remarks: item.review_remarks || item.admin_comment || '',
+  }))
+})
+
 function sourceStatus(status: string) {
   if (status === 'pending') return 'pending_human'
   if (status === 'auto_approved') return 'approved'
@@ -927,6 +950,75 @@ function markOpportunitiesInBasket(items: Opportunity[], basketRows: BasketItem[
     ...item,
     in_basket: item.in_basket || ids.has(String(item.id)),
   }))
+}
+
+function catalogItemToOpportunity(item: CatalogExplorerItem): Opportunity {
+  const dimension = item.category === 'sports' ? 'arts_sports' : item.category === 'moral' || item.category === 'academic' ? item.category : 'academic'
+  return {
+    id: `CAT-${item.id}`,
+    source_type: 'evergreen',
+    source_label: '星轨探索',
+    title: item.title,
+    category: item.section || item.category_name,
+    dimension,
+    dimension_label: item.category_name || dimensionDisplayName(dimension),
+    organizer: '综测细则目录',
+    location: '',
+    start_time: '',
+    deadline: '',
+    season_months: '',
+    credit_hint: item.description || `${item.level}项目，预计可加 ${item.score} 分`,
+    rule_ref: item.section || item.note || '',
+    official_url: '',
+    registration_url: '',
+    contact_email: '',
+    article_url: '',
+    group_qr_url: '',
+    description: item.description || item.title,
+    requirements: item.required_proofs?.map(proof => proof.name || proof.type).filter(Boolean) || [],
+    tags: [item.level, item.section].filter(Boolean),
+    attachments: [],
+    images: [],
+    roi_score: item.score,
+    in_basket: true,
+    activity_id: `CAT-${item.id}`,
+  }
+}
+
+async function addCatalogItem(item: CatalogExplorerItem) {
+  try {
+    const identity = `CAT-${item.id}`
+    const fallbackRow: BasketItem = {
+      id: `local-${identity}`,
+      stage: '想参加',
+      note: '',
+      opportunity: catalogItemToOpportunity(item),
+    }
+    const created = await postJson<BasketItem>('/plan-basket', {
+      user_id: store.studentId,
+      catalog_item_id: item.id,
+      title: item.title,
+      category: item.category,
+      category_name: item.category_name,
+      description: item.description,
+      level: item.level,
+      score: item.score,
+      section: item.section,
+      stage: '想参加',
+    })
+    const row = created?.opportunity ? created : fallbackRow
+    const localRows = loadLocalCatalogBasket().filter(existing => basketIdentity(existing) !== identity)
+    saveLocalCatalogBasket([fallbackRow, ...localRows])
+    basketCatalogIds.value = new Set([...basketCatalogIds.value, item.id])
+    basket.value = mergeBasketRows([row, ...basket.value.filter(existing => basketIdentity(existing) !== identity)])
+    ElMessage.success(`已添加「${item.title}」到备赛清单`)
+    await loadAll()
+    if (!basket.value.some(existing => basketIdentity(existing) === identity)) {
+      basket.value = mergeBasketRows([row, ...basket.value])
+    }
+  } catch (error) {
+    ElMessage.error((error as Error).message)
+  }
 }
 
 function userItemSourceLabel(source: string) {
@@ -1186,10 +1278,42 @@ function renderCharts() {
 watch(() => summary.value, () => nextTick(renderCharts))
 watch(activeStudentTab, tab => { if (tab === '星盘总览') { nextTick(renderCharts) } })
 
+async function saveGpa() {
+  const raw = gpaEditValue.value
+  const val = (typeof raw === 'string' ? raw : String(raw ?? '')).trim()
+  if (!val || isNaN(Number(val)) || Number(val) < 0 || Number(val) > 100) {
+    ElMessage.warning('请输入 0-100 的有效分数')
+    return
+  }
+  gpaSaving.value = true
+  try {
+    await api('/profile', { method: 'PUT', body: JSON.stringify({ gpa_score: Number(val) }) })
+    ElMessage.success('均分已保存')
+    await loadAll()
+  } catch (error) {
+    ElMessage.error((error as Error).message)
+  } finally {
+    gpaSaving.value = false
+  }
+}
+
 // ---- 学年切换（watch v-model 驱动） ----
 watch(currentAcademicYear, (newYear, oldYear) => {
   if (newYear !== oldYear && oldYear !== undefined) loadAll()
 })
+
+function generateAcademicYears(): string[] {
+  const now = new Date()
+  const cy = now.getFullYear()
+  const cm = now.getMonth() + 1
+  const startYear = cm >= 9 ? cy : cy - 1
+  const years: string[] = []
+  for (let i = 0; i < 4; i++) {
+    const y = startYear - i
+    years.push(`${y}-${y + 1}`)
+  }
+  return years
+}
 
 // ---- 学业成绩录入弹窗 ----
 async function openGradeModal() {
@@ -1548,7 +1672,7 @@ async function submitModalSubmit() {
   try {
     const bestMatch = submitModalAnalysisResult.value?.matches?.[0]
     const item = submitModalItem.value!
-    await postJson<{ status: string; submission_id?: number; proofs_complete?: boolean }>('/submissions', {
+    const response = await postJson<{ status: string; submission_id?: number; proofs_complete?: boolean }>('/submissions', {
       catalog_item_id: bestMatch?.id || item.id,
       uploaded_file_ids: uploadedIds,
       completion_date: submitForm.completion_date || undefined,
@@ -1577,7 +1701,7 @@ function closeSubmitModal() {
     submitModalAnalysisResult.value = null
     submitModalConfidence.value = 0
     submitModalSubmitted.value = false
-
+  
   }, 300)
 }
 
@@ -1594,14 +1718,13 @@ async function uploadSingleFile(file: File, proofType = 'general') {
   if (uploaded) {
     return {
       id: uploaded.id,
-      name: uploaded.original_filename || uploaded.filename || file.name,
       filename: uploaded.original_filename || uploaded.filename || file.name,
       url: uploaded.view_url || (uploaded.file_path ? `/api/uploads/${uploaded.file_path}` : ''),
       type: uploaded.file_type || file.type || file.name.split('.').pop(),
       proofType,
     }
   }
-  return { name: result.filename || file.name, filename: result.filename || file.name, url: result.url || '', type: file.type, proofType }
+  return { filename: result.filename || file.name, url: result.url || '', type: file.type, proofType }
 }
 
 async function uploadPublishImageFile(file: File, target: 'cover' | 'qr') {
@@ -1879,6 +2002,31 @@ async function publishAiScan() {
     ElMessage.error(`AI扫描失败：${(error as Error).message}`)
   } finally {
     publishScanUploading.value = false
+  }
+}
+
+async function runAiParse() {
+  const rawText = [aiNoticeText.value, aiGroupMessage.value].map(item => item.trim()).filter(Boolean).join('\n\n')
+  if (!rawText) {
+    ElMessage.warning('请粘贴通知内容')
+    return
+  }
+  aiParsing.value = true
+  try {
+    const parsed = await postJson<Record<string, any>>('/ai/parse-opportunity', { raw_text: rawText })
+    aiParsed.value = parsed
+    Object.assign(publishForm, {
+      title: parsed.title || publishForm.title,
+      category: parsed.category || publishForm.category,
+      dimension: parsed.dimension || publishForm.dimension,
+      location: parsed.location || publishForm.location,
+      deadline: parsed.deadline || publishForm.deadline,
+      description: parsed.description || aiNoticeText.value,
+    })
+    aiExpanded.value = false
+    ElMessage.success('解析完成，请核对信息')
+  } finally {
+    aiParsing.value = false
   }
 }
 
@@ -2291,7 +2439,19 @@ async function submitMatchedMaterial(result: AnalyzeResult, match: AnalyzeMatch)
     ElMessage.success(response.status === 'needs_more' ? '已提交审核，系统已标记需补充佐证' : '已提交审核，等待管理端终审')
     await loadAll()
   } catch (error) {
-    ElMessage.error((error as Error).message)
+    const msg = (error as Error).message
+    // 409 重复提交 → 友好提示，不是真正的错误
+    if (msg.includes('duplicate') || msg.includes('重复') || msg.includes('已有')) {
+      ElMessage.warning('该项目已提交过，请勿重复提交')
+      await loadAll()
+      return
+    }
+    // 400 缺失文件 → 具体引导
+    if (msg.includes('证明文件') || msg.includes('请先上传')) {
+      ElMessage.warning('请先上传证明材料文件')
+      return
+    }
+    ElMessage.error(msg.length > 100 ? msg.slice(0, 100) + '...' : msg)
   }
 }
 
@@ -2672,7 +2832,7 @@ onMounted(async () => {
             <div class="score-copy">
               <span class="eyebrow">综合测评总分</span>
               <div class="score-number">{{ summary?.score.total ?? '--' }}</div>
-              <p>待审核潜在加分 {{ summary?.pending_score ?? 0 }}，距离 90 分目标还差 {{ summary?.goal_gap ?? 0 }}。</p>
+              <p>{{ auditProgressItems.length }} 项待审核（潜在加分 {{ summary?.pending_score ?? 0 }}），距离 90 分目标还差 {{ summary?.goal_gap ?? 0 }}。</p>
               <div class="hero-actions">
                 <button class="btn-primary-sm" @click="activeStudentTab = '机会大厅'">去找加分机会</button>
                 <button class="btn-ghost" @click="activeStudentTab = '智审中心'">提交材料认证</button>
@@ -2694,10 +2854,10 @@ onMounted(async () => {
               <small>权重 {{ Math.round(item.weight * 100) }}%</small>
             </div>
             <div class="stat-divider" />
-            <div class="stat-item accent-stat">
+            <div class="stat-item accent-stat audit-progress-stat" title="点击查看各项目审核进度与详情" @click="showAuditProgressModal = true">
               <span>待审核</span>
-              <strong>{{ summary?.pending_score ?? 0 }}</strong>
-              <small>AI 初审后人工确认</small>
+              <strong>{{ auditProgressItems.length }}</strong>
+              <small>点击查看进度详情</small>
             </div>
           </div>
 
@@ -2977,8 +3137,8 @@ onMounted(async () => {
                     </div>
                     <div class="source-confidence">
                       <span :class="matchConfidenceClass(match.confidence)">{{ match.confidence.toFixed(1) }}%</span>
-                      <button class="source-primary-small" :disabled="isMaterialAdded(result, match)" @click="submitMatchedMaterial(result, match)">
-                        {{ isMaterialAdded(result, match) ? '已提交' : '提交整组审核' }}
+                      <button class="source-primary-small" @click="submitMatchedMaterial(result, match)">
+                        提交整组审核
                       </button>
                     </div>
                   </div>
@@ -3053,23 +3213,6 @@ onMounted(async () => {
             </div>
           </div>
 
-          <div v-if="materialAddedItems.length" class="source-card added-materials">
-            <header>已提交/加入</header>
-            <table>
-              <thead><tr><th>来源文件</th><th>匹配项目</th><th>大类</th><th>级别</th><th>得分</th><th>置信度</th><th>状态</th></tr></thead>
-              <tbody>
-                <tr v-for="item in materialAddedItems" :key="`${item.fileId}-${item.id}`">
-                  <td>{{ item.filename }}</td>
-                  <td>{{ item.title }}</td>
-                  <td>{{ item.category_name || item.category }}</td>
-                  <td>{{ item.level }}</td>
-                  <td>+{{ item.score }}</td>
-                  <td>{{ item.confidence.toFixed(1) }}%</td>
-                  <td>{{ statusLabel(sourceStatus(item.status)) }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
         </section>
 
         <section
@@ -3990,5 +4133,56 @@ onMounted(async () => {
         </button>
       </template>
     </el-dialog>
+
+    <!-- ====== 审核进度弹窗 ====== -->
+    <el-dialog v-model="showAuditProgressModal" width="820px" class="audit-progress-dialog" :close-on-click-modal="true">
+      <template #header>
+        <strong>审核进度详情</strong>
+        <span style="font-size:12px;color:var(--text-muted);margin-left:8px;">共 {{ auditProgressItems.length }} 项</span>
+      </template>
+
+      <div v-if="!auditProgressItems.length" style="text-align:center;padding:40px;color:var(--text-muted);">
+        <strong style="font-size:48px;">📭</strong>
+        <p>暂无待审核项目</p>
+        <span>提交材料认证后，AI 将自动分析并匹配综测项目</span>
+      </div>
+
+      <div v-else class="audit-progress-list">
+        <div v-for="item in auditProgressItems" :key="item.id" class="audit-progress-card">
+          <div class="apc-header">
+            <strong class="apc-title">{{ item.title }}</strong>
+            <span :class="['apc-status', item.status === 'approved' || item.status === 'auto_approved' ? 'approved' : item.status === 'rejected' ? 'rejected' : 'pending']">
+              {{ item.status === 'approved' || item.status === 'auto_approved' ? '已通过' : item.status === 'rejected' ? '已驳回' : item.status === 'needs_more' ? '需补材料' : '待审核' }}
+            </span>
+          </div>
+          <div class="apc-meta">
+            <span>{{ item.category_name || item.category }}</span>
+            <span>{{ item.level || '-' }}</span>
+            <span>+{{ item.score }}分</span>
+          </div>
+          <div class="apc-confidence-row">
+            <span>AI 置信率</span>
+            <div class="apc-confidence-bar">
+              <div class="apc-confidence-fill" :style="{ width: item.confidence + '%', background: item.confidence >= 80 ? '#10b981' : item.confidence >= 50 ? '#f59e0b' : '#ef4444' }" />
+            </div>
+            <strong :style="{ color: item.confidence >= 80 ? 'var(--success)' : item.confidence >= 50 ? 'var(--accent-amber)' : 'var(--danger)' }">{{ item.confidence.toFixed(1) }}%</strong>
+          </div>
+          <div v-if="item.risk_tags.length" class="apc-tags">
+            <span v-for="tag in item.risk_tags" :key="tag" class="apc-tag">{{ tag }}</span>
+          </div>
+          <div v-if="item.ai_reason" class="apc-reason">{{ item.ai_reason.slice(0, 120) }}{{ item.ai_reason.length > 120 ? '...' : '' }}</div>
+          <div v-if="item.review_remarks" class="apc-remarks">
+            <strong>审核备注：</strong>{{ item.review_remarks }}
+          </div>
+          <div class="apc-files" v-if="item.files && item.files.length">
+            <strong>证明材料：</strong>
+            <a v-for="f in item.files" :key="f.id" :href="f.url || ('/api/uploads/' + f.id)" target="_blank" class="apc-file-link">
+              📎 {{ f.name || f.filename || '查看材料' }}
+            </a>
+          </div>
+        </div>
+      </div>
+    </el-dialog>
+
   </main>
 </template>

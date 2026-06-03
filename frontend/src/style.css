@@ -1691,6 +1691,125 @@ body {
   color: var(--blue);
 }
 
+/* 星盘总览 — 待审核可点击入口 */
+.audit-progress-stat {
+  cursor: pointer;
+  border-radius: 10px;
+  transition: background .18s, box-shadow .18s;
+}
+.audit-progress-stat:hover {
+  background: #eef4ff;
+  box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+}
+.audit-progress-stat strong {
+  font-size: 28px;
+}
+
+/* 审核进度弹窗 */
+.audit-progress-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 62vh;
+  overflow-y: auto;
+}
+.audit-progress-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 16px 18px;
+  background: #fafbfc;
+}
+.apc-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.apc-title { font-size: 15px; font-weight: 700; color: #1e293b; }
+.apc-status {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+.apc-status.pending { background: #fef3c7; color: #b45309; }
+.apc-status.approved { background: #d1fae5; color: #065f46; }
+.apc-status.rejected { background: #fee2e2; color: #991b1b; }
+
+.apc-meta {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.apc-meta span {
+  font-size: 12px;
+  color: #64748b;
+  background: #f1f5f9;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+.apc-confidence-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.apc-confidence-row > span { font-size: 12px; color: #94a3b8; white-space: nowrap; }
+.apc-confidence-bar {
+  flex: 1;
+  height: 8px;
+  background: #e2e8f0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.apc-confidence-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width .5s;
+}
+.apc-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+.apc-tag {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: #fef2f2;
+  color: #dc2626;
+  font-weight: 500;
+}
+.apc-reason {
+  font-size: 12px;
+  color: #64748b;
+  margin-bottom: 4px;
+  line-height: 1.45;
+}
+.apc-remarks {
+  font-size: 12px;
+  color: #475569;
+  background: #fffbeb;
+  padding: 6px 10px;
+  border-radius: 6px;
+  margin-bottom: 6px;
+}
+.apc-files {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.apc-file-link {
+  color: var(--blue);
+  text-decoration: none;
+  border: 1px solid #dbeafe;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  transition: background .15s;
+}
+.apc-file-link:hover { background: #eff6ff; }
+
 .score-chart-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
