@@ -25,6 +25,9 @@ from competitions_data import COMPETITIONS
 from activities_data import load_activities, add_activity, update_activity, delete_activity
 from honor_data import load_honors, add_honor, update_honor, delete_honor
 
+COVER_DIR = Path(__file__).resolve().parent.parent / 'frontend' / 'public' / 'competition-covers'
+COVER_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.gif')
+
 # ============================================================
 # App Factory
 # ============================================================
@@ -42,6 +45,15 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(os.path.dirname(app.config['SQLALCHEMY_DATABASE_URI'].replace('sqlite:///', '')), exist_ok=True)
 
 db.init_app(app)
+
+
+def ensure_runtime_tables():
+    """Create missing tables for older local databases without changing existing rows."""
+    with app.app_context():
+        db.create_all()
+
+
+ensure_runtime_tables()
 
 # ============================================================
 # Auth Setup
@@ -479,13 +491,20 @@ def _activity_to_opportunity(activity):
     }
 
 
+def _competition_cover_path(comp_id):
+    for ext in COVER_EXTENSIONS:
+        if (COVER_DIR / f'{comp_id}{ext}').exists():
+            return f'/competition-covers/{comp_id}{ext}'
+    return f'/competition-covers/{comp_id}.png'
+
+
 def _competition_to_opportunity(comp):
     """将学科竞赛分类表中的竞赛转换为 Opportunity 对象"""
     level = comp.get('mapped_level', comp.get('level', ''))
     comp_id = comp.get('id', '')
     website = comp.get('website', '').strip()
     # 使用本地生成的封面图（640x360 > 480p）
-    cover_path = f'/competition-covers/{comp_id}.png'
+    cover_path = _competition_cover_path(comp_id)
     return {
         'id': comp_id,
         'source_type': 'competition',
@@ -2032,6 +2051,12 @@ def serve_public_upload(filepath):
     return send_from_directory(directory, filename)
 
 
+@app.route('/competition-covers/<path:filename>')
+def serve_competition_cover(filename):
+    safe_name = os.path.basename(filename.replace('\\', '/'))
+    return send_from_directory(COVER_DIR, safe_name)
+
+
 # ============================================================
 # API: AI Analyze (Enhanced - using ai_engine.py)
 # ============================================================
@@ -2333,7 +2358,7 @@ def api_admin_submissions():
     if queue_filter == 'high_confidence':
         query = query.filter(Submission.status.in_(['pending', 'needs_more']), Submission.ai_confidence >= 90)
     elif queue_filter in ('pending', 'pending_human'):
-        query = query.filter_by(status='pending')
+        query = query.filter(Submission.status.in_(['pending', 'needs_more']))
     elif queue_filter == 'needs_more':
         query = query.filter_by(status='needs_more')
     elif queue_filter == 'risk':
@@ -2342,6 +2367,8 @@ def api_admin_submissions():
         query = query.filter(Submission.status.in_(['approved', 'auto_approved']))
     elif queue_filter == 'rejected':
         query = query.filter_by(status='rejected')
+    elif status_filter == 'pending':
+        query = query.filter(Submission.status.in_(['pending', 'needs_more']))
     elif status_filter:
         query = query.filter_by(status=status_filter)
 
@@ -2438,6 +2465,9 @@ def api_review_submission(sub_id):
     sub = Submission.query.get_or_404(sub_id)
     data = request.get_json()
     action = data.get('action', '')
+    valid_actions = {'approve', 'reject', 'needs_more', 'return', 'reassign'}
+    if action not in valid_actions:
+        return jsonify({'error': f'未知审核操作: {action}'}), 400
 
     if action == 'approve':
         sub.status = 'approved'
@@ -2532,25 +2562,31 @@ def api_review_submission(sub_id):
     admin_ip = request.headers.get('X-Forwarded-For', request.remote_addr or '')
     user_agent = request.headers.get('User-Agent', '')[:512]
 
-    audit = AuditLog(
-        submission_id=sub.id,
-        action_type=action,
-        ai_model_version='ai-engine-v3',
-        ai_confidence=sub.ai_confidence or 0,
-        ai_decision=sub.ai_decision or '',
-        ai_score_suggested=ai_suggested_score,
-        admin_id=current_user.id,
-        admin_ip=admin_ip,
-        admin_score_set=data.get('score'),
-        admin_decision=action,
-        override_reason=data.get('override_reason', ''),
-        override_detail=data.get('remarks', ''),
-        remarks=data.get('remarks', ''),
-        user_agent=user_agent,
-    )
-    db.session.add(audit)
+    try:
+        audit = AuditLog(
+            submission_id=sub.id,
+            action_type=action,
+            ai_model_version='ai-engine-v3',
+            ai_confidence=sub.ai_confidence or 0,
+            ai_decision=sub.ai_decision or '',
+            ai_score_suggested=ai_suggested_score,
+            admin_id=current_user.id,
+            admin_ip=admin_ip,
+            admin_score_set=data.get('score'),
+            admin_decision=action,
+            override_reason=data.get('override_reason', ''),
+            override_detail=data.get('remarks', ''),
+            remarks=data.get('remarks', ''),
+            user_agent=user_agent,
+        )
+        db.session.add(audit)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'error': f'审核失败：审计日志写入失败，请确认数据库迁移已完成。{e}'
+        }), 500
 
-    db.session.commit()
     return jsonify({'success': True, 'status': sub.status})
 
 

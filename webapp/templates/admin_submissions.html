@@ -1,39 +1,84 @@
 {% extends "base.html" %}
 {% block title %}审核队列 - 综测星轨{% endblock %}
 {% block content %}
+<style>
+.audit-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px}
+.audit-toolbar-left{display:flex;align-items:center;gap:10px;color:var(--text-muted);font-size:13px}
+.audit-bulk-btn{border:0;border-radius:10px;background:#dcfce7;color:#166534;font-weight:700;padding:9px 14px;cursor:pointer}
+.audit-bulk-btn:disabled{opacity:.45;cursor:not-allowed}
+.audit-table .risk-low{box-shadow:inset 4px 0 0 #ef4444;background:#fff7f7}
+.th-confidence{display:flex;align-items:center;gap:8px;white-space:nowrap}
+.th-bulk{border:0;border-radius:999px;background:#dcfce7;color:#166534;font-size:11px;font-weight:800;padding:4px 8px;cursor:pointer}
+.th-bulk:disabled{opacity:.45;cursor:not-allowed}
+.confidence-cell{display:flex;align-items:center;gap:8px;white-space:nowrap}
+.confidence-tag{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:5px 10px;font-size:12px;font-weight:800}
+.confidence-tag.high{background:#dcfce7;color:#15803d}
+.confidence-tag.mid{background:#fef3c7;color:#b45309}
+.confidence-tag.low{background:#fee2e2;color:#b91c1c;animation:pulseRisk 1.2s infinite}
+.confidence-tag i{width:7px;height:7px;border-radius:50%;display:inline-block;background:currentColor}
+.confidence-status{font-size:11px;color:var(--text-muted)}
+.file-strip{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.file-thumb{width:42px;height:42px;border-radius:8px;border:1px solid var(--border);object-fit:cover;background:#fff}
+.file-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border);border-radius:999px;padding:5px 8px;font-size:12px;color:var(--primary);background:#fff;cursor:pointer}
+.row-actions{display:flex;gap:6px;flex-wrap:nowrap}
+.row-actions .btn{white-space:nowrap}
+.detail-btn{border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:700;cursor:pointer}
+.drawer-mask{position:fixed;inset:0;background:rgba(15,23,42,.42);z-index:1000;display:none;justify-content:flex-end}
+.drawer-mask.show{display:flex}
+.audit-drawer{width:min(720px,calc(100vw - 24px));height:100%;background:#fff;box-shadow:-18px 0 48px rgba(15,23,42,.18);display:flex;flex-direction:column;overflow:hidden}
+.drawer-head{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid var(--border);padding:24px 28px 20px;background:#fff;flex-shrink:0}
+.drawer-head h3{font-size:20px;margin:8px 0 0;color:var(--text);line-height:1.35}
+.drawer-kicker{font-size:13px;color:#1d4ed8;font-weight:800}
+.drawer-close{border:0;background:#f1f5f9;width:38px;height:38px;border-radius:999px;cursor:pointer;color:var(--text-muted);flex-shrink:0}
+.drawer-content{flex:1;overflow:auto;padding:20px 28px;display:flex;flex-direction:column;gap:14px;background:#fff}
+.drawer-section{border:1px solid var(--border);border-radius:12px;background:#fff;padding:16px 18px}
+.drawer-section h4{margin:0 0 14px;font-size:15px;color:var(--text)}
+.kv-grid{display:grid;grid-template-columns:112px 1fr;gap:12px 18px;font-size:13px;align-items:start}
+.kv-grid .k{color:var(--text-muted);font-weight:600}
+.kv-grid .v{color:var(--text);font-weight:700;line-height:1.45}
+.section-text{font-size:13px;line-height:1.65;color:var(--text-muted);margin:0}
+.compact-list{margin:0;padding-left:18px;color:var(--text-muted);font-size:13px;line-height:1.7}
+.drawer-footer{flex-shrink:0;padding:14px 28px;background:#fff;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;box-shadow:0 -10px 24px rgba(15,23,42,.06)}
+.evidence-list{display:flex;flex-direction:column;gap:8px}
+.evidence-item{border-left:3px solid #3b82f6;background:#f8fafc;border-radius:8px;padding:8px 10px;font-size:13px;line-height:1.5}
+.risk-note{border-left:3px solid #ef4444;background:#fff7f7;color:#991b1b;border-radius:8px;padding:9px 10px;font-size:13px;line-height:1.5}
+.material-grid{display:grid;grid-template-columns:1fr;gap:12px}
+.material-card{border:1px solid var(--border);border-radius:12px;background:#f8fafc;overflow:hidden}
+.material-card img{width:100%;max-height:360px;object-fit:contain;background:#fff;display:block}
+.material-file{min-height:82px;display:flex;align-items:center;justify-content:flex-start;gap:12px;color:var(--text-muted);padding:14px 16px;background:#f8fafc}
+.material-meta{padding:10px;font-size:12px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.material-meta strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.quick-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.quick-actions button{border:0;border-radius:10px;padding:9px 13px;font-weight:700;cursor:pointer}
+.quick-reject{background:#fee2e2;color:#b91c1c}.quick-score{background:#fef3c7;color:#92400e}.quick-pass{background:#dcfce7;color:#166534}.quick-supplement{background:#fff7ed;color:#9a3412}
+.score-row{display:none;margin-top:10px;grid-template-columns:1fr auto;gap:8px}.score-row.show{display:grid}.score-row input{border:1px solid var(--border);border-radius:8px;padding:8px}
+@keyframes pulseRisk{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.25)}50%{box-shadow:0 0 0 4px rgba(239,68,68,.12)}}
+@media (max-width:900px){.audit-toolbar{align-items:flex-start;flex-direction:column}.audit-drawer{width:100%}.drawer-head{padding:20px}.drawer-content{padding:16px 20px}.drawer-footer{padding:12px 20px}.kv-grid{grid-template-columns:90px 1fr}}
+</style>
+
 <div class="page">
     <div class="page-header" style="padding:24px 0 8px;margin-bottom:20px;">
         <h1 style="font-size:28px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:10px;"><i class="fas fa-clipboard-check" style="color:var(--primary);"></i> 星轨审核中心</h1>
-        <p style="color:var(--text-muted);margin-top:4px;font-size:14px;">审核学生提交的证明材料 · 管理综测系统运行状态</p>
+        <p style="color:var(--text-muted);margin-top:4px;font-size:14px;">审核学生提交的证明材料 · 红绿灯置信度队列 · 证据链快速判分</p>
     </div>
 
-    <!-- 统计卡片 -->
     <div class="admin-stats" id="adminStats">
-        <div class="admin-stat-card">
-            <div class="admin-stat-icon blue"><i class="fas fa-user-graduate"></i></div>
-            <div><div class="admin-stat-value" id="statStudents">--</div><div class="admin-stat-label">注册学生数</div></div>
-        </div>
-        <div class="admin-stat-card">
-            <div class="admin-stat-icon amber"><i class="fas fa-clock"></i></div>
-            <div><div class="admin-stat-value" id="statPending">--</div><div class="admin-stat-label">待审核提交</div></div>
-        </div>
-        <div class="admin-stat-card">
-            <div class="admin-stat-icon green"><i class="fas fa-check-circle"></i></div>
-            <div><div class="admin-stat-value" id="statApproved">--</div><div class="admin-stat-label">今日通过</div></div>
-        </div>
-        <div class="admin-stat-card">
-            <div class="admin-stat-icon purple"><i class="fas fa-file-alt"></i></div>
-            <div><div class="admin-stat-value" id="statSubmissions">--</div><div class="admin-stat-label">总提交数</div></div>
-        </div>
+        <div class="admin-stat-card"><div class="admin-stat-icon blue"><i class="fas fa-user-graduate"></i></div><div><div class="admin-stat-value" id="statStudents">--</div><div class="admin-stat-label">注册学生数</div></div></div>
+        <div class="admin-stat-card"><div class="admin-stat-icon amber"><i class="fas fa-clock"></i></div><div><div class="admin-stat-value" id="statPending">--</div><div class="admin-stat-label">待审核提交</div></div></div>
+        <div class="admin-stat-card"><div class="admin-stat-icon green"><i class="fas fa-check-circle"></i></div><div><div class="admin-stat-value" id="statApproved">--</div><div class="admin-stat-label">今日通过</div></div></div>
+        <div class="admin-stat-card"><div class="admin-stat-icon purple"><i class="fas fa-file-alt"></i></div><div><div class="admin-stat-value" id="statSubmissions">--</div><div class="admin-stat-label">总提交数</div></div></div>
     </div>
 
-    <div class="flex-between mb-16">
-        <div></div>
+    <div class="audit-toolbar">
+        <div class="audit-toolbar-left">
+            <button class="audit-bulk-btn" id="bulkApproveBtn" onclick="bulkApproveHighConfidence()" disabled><i class="fas fa-check-double"></i> 高置信全选通过</button>
+            <span id="bulkHint">Score >= 90 的待审材料将自动纳入批处理</span>
+        </div>
         <div class="filter-bar">
-            <select id="filterStatus" onchange="loadSubmissions()">
+            <select id="filterStatus" onchange="resetAndLoad()">
                 <option value="">全部状态</option>
                 <option value="pending" selected>待审核</option>
-                <option value="auto_approved">AI自动通过</option>
+                <option value="needs_more">需补材料</option>
                 <option value="approved">已通过</option>
                 <option value="rejected">已驳回</option>
             </select>
@@ -43,16 +88,14 @@
     <div class="card">
         <div class="card-body" style="padding:0;">
             <div class="table-wrap">
-                <table class="admin-table">
+                <table class="admin-table audit-table">
                     <thead>
                         <tr>
                             <th>ID</th><th>学生</th><th>匹配项目</th><th>级别</th><th>得分</th>
-                            <th>材料</th><th>完整性</th><th>AI置信度</th><th>提交时间</th><th style="min-width:200px;">操作</th>
+                            <th>材料</th><th>完整性</th><th><span class="th-confidence">AI置信度 <button class="th-bulk" id="bulkApproveHeadBtn" onclick="bulkApproveHighConfidence()" disabled>绿灯通过</button></span></th><th>提交时间</th><th style="min-width:250px;">操作</th>
                         </tr>
                     </thead>
-                    <tbody id="submissionsTableBody">
-                        <tr><td colspan="10"><div class="spinner"></div></td></tr>
-                    </tbody>
+                    <tbody id="submissionsTableBody"><tr><td colspan="10"><div class="spinner"></div></td></tr></tbody>
                 </table>
             </div>
         </div>
@@ -67,122 +110,264 @@
     </div>
 </div>
 
-<!-- Review Modal -->
+<div class="drawer-mask" id="detailDrawer" onclick="if(event.target===this)closeDrawer()">
+    <aside class="audit-drawer">
+        <div class="drawer-head">
+            <div><div class="drawer-kicker" id="drawerKicker">#</div><h3 id="drawerTitle">提交详情</h3></div>
+            <button class="drawer-close" onclick="closeDrawer()"><i class="fas fa-times"></i></button>
+        </div>
+        <div id="drawerBody" class="drawer-content"></div>
+        <div id="drawerFooter" class="drawer-footer"></div>
+    </aside>
+</div>
+
 <div class="modal-overlay" id="reviewModal" style="display:none;">
     <div class="modal-box">
         <h3 id="reviewModalTitle">审核操作</h3>
         <div id="reviewModalInfo" style="font-size:13px; color:var(--text-muted); margin-bottom:12px;"></div>
-        <div class="form-group">
-            <label>审核备注</label>
-            <textarea id="reviewRemarks" placeholder="输入审核意见..."></textarea>
-        </div>
-        <div class="form-group" id="reassignGroup" style="display:none;">
-            <label>重新分配到项目ID</label>
-            <input type="text" id="reassignItemId" placeholder="输入综测项目ID">
-        </div>
+        <div class="form-group"><label>审核备注</label><textarea id="reviewRemarks" placeholder="输入审核意见..."></textarea></div>
+        <div class="form-group" id="scoreGroup" style="display:none;"><label>修正分值</label><input type="number" id="reviewScore" min="0" step="0.1" placeholder="留空则使用项目默认分值"></div>
+        <div class="form-group" id="reassignGroup" style="display:none;"><label>重新分配到项目ID</label><input type="text" id="reassignItemId" placeholder="输入综测项目ID"></div>
         <div class="modal-actions" id="reviewActions"></div>
     </div>
 </div>
 {% endblock %}
+
 {% block scripts %}
 <script>
-const STATUS_LABELS = {
-    pending: '<span class="status-badge status-pending">待审核</span>',
-    auto_approved: '<span class="status-badge status-auto_approved">AI通过</span>',
-    approved: '<span class="status-badge status-approved">已通过</span>',
-    rejected: '<span class="status-badge status-rejected">已驳回</span>',
-};
 const LVL_BADGES = {'国家级':'badge-national','省级':'badge-provincial','校级':'badge-school','院级':'badge-college','班级':'badge-college'};
-
+const STATUS_TEXT = {pending:'待审核', needs_more:'需补材料', auto_approved:'AI通过', approved:'已通过', rejected:'已驳回'};
+const PROOF_NAMES = {
+    appointment:'任职证明/聘书', certificate:'荣誉证书/证明', award_cert:'获奖证书',
+    paper_publish:'论文发表证明', paper_content:'论文全文', project_doc:'立项/结项证明',
+    project_result:'项目成果证明', patent_cert:'专利/软著证书', score_report:'成绩单/证书',
+    cert_file:'等级证书/成绩单', transcript:'成绩单', admission:'录取证明',
+    article:'发表文章证明', participation:'参赛证明', general:'相关证明材料'
+};
 let currentPage = 1;
 let totalPages = 1;
 let currentSub = null;
+window._submissions = [];
+
+function confidenceMeta(score) {
+    const n = Number(score || 0);
+    if (n >= 90) return {level:'high', label:'AI高置信', status:'可批量通过'};
+    if (n >= 60) return {level:'mid', label:'待人工补件', status:'需人工核验'};
+    return {level:'low', label:'异常/高风险', status:'优先介入'};
+}
 
 async function loadSubmissions() {
     const status = document.getElementById('filterStatus').value;
-    const resp = await fetch(`/api/admin/submissions?status=${status}&page=${currentPage}&per_page=15`);
+    const resp = await fetch(`/api/admin/submissions?status=${encodeURIComponent(status)}&page=${currentPage}&per_page=15`);
     const data = await resp.json();
-
+    window._submissions = data.submissions || [];
     totalPages = Math.ceil(data.total / data.per_page) || 1;
     document.getElementById('pageInfo').textContent = `共 ${data.total} 条，第 ${data.page} / ${totalPages} 页`;
     document.getElementById('btnPrev').disabled = currentPage <= 1;
     document.getElementById('btnNext').disabled = currentPage >= totalPages;
     document.getElementById('paginationBar').style.display = data.total > 0 ? 'flex' : 'none';
+    renderBulkState();
 
-    if (data.submissions.length === 0) {
-        document.getElementById('submissionsTableBody').innerHTML =
-            '<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text-muted);">暂无提交记录</td></tr>';
+    if (!window._submissions.length) {
+        document.getElementById('submissionsTableBody').innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text-muted);">暂无提交记录</td></tr>';
         return;
     }
+    document.getElementById('submissionsTableBody').innerHTML = window._submissions.map(renderSubmissionRow).join('');
+}
 
-    document.getElementById('submissionsTableBody').innerHTML = data.submissions.map(s => `
-        <tr>
+function renderSubmissionRow(s) {
+    const meta = confidenceMeta(s.ai_confidence);
+    const files = (s.files || []).slice(0, 3);
+    return `
+        <tr class="${meta.level === 'low' ? 'risk-low' : ''}">
             <td style="white-space:nowrap;">#${s.id}</td>
-            <td style="white-space:nowrap;"><strong>${escHtml(s.student_name)}</strong><br><span style="font-size:11px;color:var(--text-muted);">${escHtml(s.student_id)}</span></td>
-            <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;"><strong>${escHtml(s.title)}</strong></td>
-            <td style="white-space:nowrap;"><span class="badge ${LVL_BADGES[s.level]||'badge-college'}">${s.level||'-'}</span></td>
-            <td style="white-space:nowrap;color:var(--primary);font-weight:700;">+${s.score||0}</td>
-            <td style="white-space:nowrap;">
-                ${s.files && s.files.length > 0 ? `<span style="font-size:12px;cursor:pointer;color:var(--primary);" onclick="showFiles(${s.id})"><i class="fas fa-paperclip"></i> ${s.files.length}个</span>` : '-'}
-            </td>
-            <td style="white-space:nowrap;">
-                ${s.proofs_complete ? '<span style="color:var(--success);font-size:11px;font-weight:600;"><i class="fas fa-check-circle"></i> 完整</span>' : (s.missing_proofs && s.missing_proofs.length > 0 ? `<span style="color:var(--danger);font-size:11px;">缺${s.missing_proofs.length}项</span>` : '--')}
-            </td>
-            <td style="white-space:nowrap;">
-                <span style="font-size:13px; color:${s.ai_confidence >= 80 ? 'var(--success)' : s.ai_confidence >= 40 ? 'var(--accent-amber)' : 'var(--danger)'}; font-weight:700;">
-                    ${Number(s.ai_confidence).toFixed(1)}%
-                </span>
-                <span style="font-size:11px;color:var(--text-muted);margin-left:2px;">${STATUS_LABELS[s.status] || s.status}</span>
-            </td>
-            <td style="font-size:11px;white-space:nowrap;">${s.created_at}</td>
-            <td style="white-space:nowrap;min-width:200px;">
-                <div class="action-btns">
-                    ${s.status === 'pending' ? `
+            <td style="white-space:nowrap;"><strong>${escHtml(s.student_name || '-')}</strong><br><span style="font-size:11px;color:var(--text-muted);">${escHtml(s.student_id || '')}</span></td>
+            <td style="max-width:220px;"><strong>${escHtml(s.title || '-')}</strong></td>
+            <td style="white-space:nowrap;"><span class="badge ${LVL_BADGES[s.level] || 'badge-college'}">${escHtml(s.level || '-')}</span></td>
+            <td style="white-space:nowrap;color:var(--primary);font-weight:800;">+${formatScore(s.score)}</td>
+            <td>${renderFileStrip(s, files)}</td>
+            <td style="white-space:nowrap;">${renderProofState(s)}</td>
+            <td><div class="confidence-cell"><span class="confidence-tag ${meta.level}"><i></i>${Number(s.ai_confidence || 0).toFixed(1)}%</span><span class="confidence-status">${meta.label}</span></div></td>
+            <td style="font-size:11px;white-space:nowrap;">${escHtml(s.created_at || '')}</td>
+            <td><div class="row-actions">
+                <button class="detail-btn" onclick="openDrawer(${s.id})"><i class="fas fa-search"></i> 详情</button>
+                ${s.status === 'pending' || s.status === 'needs_more' ? `
                     <button class="btn btn-success btn-sm" onclick="openReview(${s.id}, 'approve')"><i class="fas fa-check"></i> 通过</button>
                     <button class="btn btn-outline btn-sm" onclick="openReview(${s.id}, 'reject')" style="color:var(--danger);"><i class="fas fa-times"></i> 驳回</button>
                     <button class="btn btn-outline btn-sm" onclick="openReview(${s.id}, 'reassign')"><i class="fas fa-exchange-alt"></i> 重分配</button>
-                    ` : `<span style="font-size:11px;color:var(--text-light);">${s.review_remarks||'--'}</span>`}
-                </div>
-            </td>
-        </tr>
-    `).join('');
-
-    // Store submissions data for file viewing
-    window._submissions = data.submissions;
+                ` : `<span style="font-size:11px;color:var(--text-light);">${escHtml(s.review_remarks || STATUS_TEXT[s.status] || '--')}</span>`}
+            </div></td>
+        </tr>`;
 }
 
-function changePage(delta) {
-    currentPage = Math.max(1, Math.min(totalPages, currentPage + delta));
-    loadSubmissions();
+function renderFileStrip(s, files) {
+    if (!s.files || !s.files.length) return '-';
+    const previews = files.map(f => isImageFile(f) ?
+        `<img class="file-thumb" src="${fileUrl(f)}" alt="${escHtml(f.filename)}" title="${escHtml(f.filename)}" onclick="openDrawer(${s.id})">` :
+        `<span class="file-chip" onclick="openDrawer(${s.id})"><i class="fas ${fileIcon(f)}"></i>${escHtml(shortName(f.filename))}</span>`
+    ).join('');
+    const more = s.files.length > files.length ? `<span class="file-chip" onclick="openDrawer(${s.id})">+${s.files.length - files.length}</span>` : '';
+    return `<div class="file-strip">${previews}${more}</div>`;
 }
 
-function openReview(subId, action) {
-    currentSub = {id: subId, action};
-    const modal = document.getElementById('reviewModal');
-    const title = document.getElementById('reviewModalTitle');
-    const actions = document.getElementById('reviewActions');
-    const reassign = document.getElementById('reassignGroup');
+function renderProofState(s) {
+    if (s.proofs_complete) return '<span style="color:var(--success);font-size:12px;font-weight:700;"><i class="fas fa-check-circle"></i> 完整</span>';
+    if (s.missing_proofs && s.missing_proofs.length) return `<span style="color:var(--danger);font-size:12px;font-weight:700;">缺 ${s.missing_proofs.length} 项</span>`;
+    return '<span style="color:var(--text-muted);font-size:12px;">待核验</span>';
+}
 
-    reassign.style.display = action === 'reassign' ? 'block' : 'none';
-    if (action === 'approve') {
-        title.textContent = '确认通过审核';
-        document.getElementById('reviewModalInfo').textContent = `通过提交 #${subId}，该加分将自动加入学生的综测库。`;
-        actions.innerHTML = `<button class="btn btn-outline btn-sm" onclick="closeReview()">取消</button>
-            <button class="btn btn-success btn-sm" onclick="submitReview()"><i class="fas fa-check"></i> 确认通过</button>`;
-    } else if (action === 'reject') {
-        title.textContent = '驳回提交';
-        document.getElementById('reviewModalInfo').textContent = `驳回提交 #${subId}，学生可重新提交。`;
-        actions.innerHTML = `<button class="btn btn-outline btn-sm" onclick="closeReview()">取消</button>
-            <button class="btn btn-outline btn-sm" style="color:var(--danger);" onclick="submitReview()"><i class="fas fa-times"></i> 确认驳回</button>`;
-    } else {
-        title.textContent = '重新分配项目';
-        document.getElementById('reviewModalInfo').textContent = `将提交 #${subId} 关联到正确的综测项目。`;
-        actions.innerHTML = `<button class="btn btn-outline btn-sm" onclick="closeReview()">取消</button>
-            <button class="btn btn-primary btn-sm" onclick="submitReview()"><i class="fas fa-exchange-alt"></i> 确认重分配</button>`;
+function openDrawer(subId) {
+    const s = window._submissions.find(item => item.id === subId);
+    if (!s) return;
+    const meta = confidenceMeta(s.ai_confidence);
+    document.getElementById('drawerKicker').textContent = `#${s.id}`;
+    document.getElementById('drawerTitle').textContent = s.title || '提交详情';
+    document.getElementById('drawerBody').innerHTML = renderDrawer(s, meta);
+    document.getElementById('drawerFooter').innerHTML = renderDrawerFooter(s);
+    document.getElementById('detailDrawer').classList.add('show');
+}
+
+function renderDrawerFooter(s) {
+    return `
+        <button class="btn btn-outline btn-sm" style="color:var(--danger);" onclick="openReview(${s.id}, 'reject')"><i class="fas fa-times"></i> 驳回</button>
+        <button class="btn btn-outline btn-sm" onclick="openReview(${s.id}, 'needs_more')"><i class="fas fa-exclamation-triangle"></i> 补材料</button>
+        <button class="btn btn-success btn-sm" onclick="openReview(${s.id}, 'approve')"><i class="fas fa-check"></i> 通过</button>`;
+}
+
+function renderDrawer(s, meta) {
+    const evidence = buildEvidence(s);
+    const risks = buildRisks(s);
+    const supplements = buildSupplements(s);
+    const structuredRows = buildStructuredRows(s);
+    const statusLabel = STATUS_TEXT[s.status] || s.status || '待审核';
+    return `
+        <section class="drawer-section">
+            <h4>AI 判定结果</h4>
+            <div class="kv-grid">
+                <div class="k">学生</div><div class="v">${escHtml(s.student_name || '-')} ${s.student_id ? `（${escHtml(s.student_id)}）` : ''}</div>
+                <div class="k">建议项目</div><div class="v">${escHtml(s.title || '未命名材料')}</div>
+                <div class="k">建议分值</div><div class="v">+${formatScore(s.score)}</div>
+                <div class="k">置信度</div><div class="v"><span class="confidence-tag ${meta.level}"><i></i>${Number(s.ai_confidence || 0).toFixed(1)}% · ${escHtml(meta.label)}</span></div>
+                <div class="k">状态</div><div class="v"><span class="confidence-tag ${meta.level}"><i></i>${escHtml(statusLabel)}</span></div>
+            </div>
+            ${s.ai_reason ? `<p class="section-text" style="margin-top:14px;">${escHtml(s.ai_reason)}</p>` : ''}
+        </section>
+        <section class="drawer-section">
+            <h4>结构化识别</h4>
+            <div class="kv-grid">
+                ${structuredRows.map(row => `<div class="k">${escHtml(row[0])}</div><div class="v">${escHtml(row[1])}</div>`).join('')}
+            </div>
+        </section>
+        <section class="drawer-section">
+            <h4>细则锚点</h4>
+            ${renderRuleAnchor(s)}
+        </section>
+        <section class="drawer-section">
+            <h4>风险预警链</h4>
+            ${risks.length ? risks.map(item => `<div class="risk-note">${item}</div>`).join('') : '<p class="section-text">无明显风险标签。</p>'}
+        </section>
+        <section class="drawer-section">
+            <h4>需补充材料</h4>
+            ${supplements.length ? `<ul class="compact-list">${supplements.map(item => `<li>${item}</li>`).join('')}</ul>` : '<p class="section-text">暂无 AI 生成补件项。</p>'}
+        </section>
+        <section class="drawer-section">
+            <h4>核心证据链</h4>
+            <ol class="compact-list">${evidence.map(item => `<li>${item}</li>`).join('')}</ol>
+        </section>
+        <section class="drawer-section">
+            <h4>原始材料</h4>
+            <div class="material-grid">${renderMaterialCards(s)}</div>
+        </section>
+        `;
+}
+
+function buildStructuredRows(s) {
+    const f = s.extracted_features || {};
+    const namesMatched = f.name_matched ?? f.is_name_matched ?? f.name_match;
+    return [
+        ['姓名', s.student_name || f.detected_name || '待确认'],
+        ['活动/证书', f.event_name || f.certificate_name || s.title || '待确认'],
+        ['等级', f.level || s.level || '待确认'],
+        ['角色', f.role || f.identity_role || '待确认'],
+        ['日期', f.date || f.award_date || f.issue_date || '待确认'],
+        ['姓名匹配', namesMatched === true ? '已匹配' : namesMatched === false ? '不匹配' : '待核验']
+    ];
+}
+
+function renderRuleAnchor(s) {
+    const m = s.matched_regulation || {};
+    const anchors = [];
+    if (m.section || m.clause_id || m.clause_text) {
+        anchors.push(`<strong>${escHtml(m.section || m.clause_id || '已匹配细则')}</strong>${m.clause_text ? `<br>${escHtml(m.clause_text)}` : ''}`);
     }
+    (s.required_proofs || []).forEach(p => anchors.push(`要求材料：${escHtml(PROOF_NAMES[p] || p)}`));
+    if (!anchors.length) return '<p class="section-text">暂无明确细则锚点，请按材料原件人工核验。</p>';
+    return `<ul class="compact-list">${anchors.map(item => `<li>${item}</li>`).join('')}</ul>`;
+}
+
+function buildEvidence(s) {
+    const items = [];
+    const f = s.extracted_features || {};
+    const fact = [f.event_name || f.certificate_name, f.level || s.level, f.award, f.detected_name || s.student_name].filter(Boolean).join(' · ');
+    if (fact) items.push(`事实提取：${escHtml(fact)}`);
+    const m = s.matched_regulation || {};
+    if (m.section || m.clause_id || m.clause_text) items.push(`细则锚定：${escHtml(m.section || m.clause_id || '已匹配规则')} ${escHtml(m.clause_text || '').slice(0, 140)}`);
+    (s.audit_chain || []).slice(0, 6).forEach((line, index) => items.push(`Step ${index + 1}：${escHtml(line)}`));
+    if (!items.length) items.push(`已上传 ${(s.files || []).length} 份材料，需核对项目、级别、姓名与日期。`);
+    return items;
+}
+
+function buildRisks(s) {
+    const risks = [];
+    const tags = s.risk_assessment?.risk_tags || [];
+    tags.forEach(tag => risks.push(`风险标签：${escHtml(tag)}`));
+    if (s.risk_assessment?.risk_description) risks.push(escHtml(s.risk_assessment.risk_description));
+    (s.missing_fields || []).slice(0, 5).forEach(field => risks.push(`缺失字段：${escHtml(field.field_name || field.field_key || field)}`));
+    if (Number(s.ai_confidence || 0) < 60) risks.push('AI 置信度低于 60%，建议优先人工介入。');
+    if (s.missing_proofs && s.missing_proofs.length) risks.push(`证明材料缺失：${s.missing_proofs.map(escHtml).join('、')}`);
+    return risks;
+}
+
+function buildSupplements(s) {
+    const items = [];
+    (s.missing_proofs || []).forEach(p => items.push(`补充 ${escHtml(PROOF_NAMES[p] || p)}`));
+    (s.missing_fields || []).forEach(field => items.push(`补全 ${escHtml(field.field_name || field.field_key || field)}`));
+    return items;
+}
+
+function renderMaterialCards(s) {
+    if (!s.files || !s.files.length) return '<p class="section-text">暂无证明材料</p>';
+    return s.files.map(f => `
+        <article class="material-card">
+            ${isImageFile(f)
+                ? `<a href="${fileUrl(f)}" target="_blank"><img src="${fileUrl(f)}" alt="${escHtml(f.filename)}"></a>`
+                : `<div class="material-file"><i class="fas ${fileIcon(f)}" style="font-size:26px;color:var(--primary);"></i><div><strong>${escHtml(f.filename)}</strong><span style="display:block;margin-top:4px;">${escHtml((f.file_type || 'file').toUpperCase())}</span></div></div>`}
+            <div class="material-meta">
+                <div style="min-width:0;"><strong>${escHtml(f.filename)}</strong><span style="display:block;color:var(--text-muted);margin-top:3px;">${escHtml(PROOF_NAMES[f.proof_type] || f.proof_type || '未分类')} · ${escHtml(f.uploaded_at || '')}</span></div>
+                <a class="btn btn-outline btn-sm" href="${fileUrl(f)}" target="_blank">打开</a>
+            </div>
+        </article>`).join('');
+}
+function closeDrawer() { document.getElementById('detailDrawer').classList.remove('show'); }
+function toggleScoreFix(subId) { document.getElementById(`scoreFix-${subId}`)?.classList.toggle('show'); }
+function approveWithDrawerScore(subId) { openReview(subId, 'approve', document.getElementById(`scoreInput-${subId}`)?.value || ''); }
+
+function openReview(subId, action, scoreValue) {
+    currentSub = {id: subId, action};
+    const s = window._submissions.find(item => item.id === subId) || {};
+    document.getElementById('reassignGroup').style.display = action === 'reassign' ? 'block' : 'none';
+    document.getElementById('scoreGroup').style.display = action === 'approve' ? 'block' : 'none';
     document.getElementById('reviewRemarks').value = '';
     document.getElementById('reassignItemId').value = '';
-    modal.style.display = 'flex';
+    document.getElementById('reviewScore').value = scoreValue ?? '';
+    const titles = {approve:'确认通过审核', reject:'驳回提交', reassign:'重新分配项目', needs_more:'通知补充材料'};
+    const info = {approve:`通过提交 #${subId}，将写入学生综测库。`, reject:`驳回提交 #${subId}，学生可重新提交。`, reassign:`将提交 #${subId} 关联到正确的综测项目。`, needs_more:`将提交 #${subId} 标记为需补材料，并通知学生补充证明。`};
+    document.getElementById('reviewModalTitle').textContent = titles[action] || '审核操作';
+    document.getElementById('reviewModalInfo').textContent = `${info[action] || ''} 当前项目：${s.title || '-'}`;
+    const confirmClass = action === 'approve' ? 'btn-success' : action === 'reassign' ? 'btn-primary' : 'btn-outline';
+    const confirmStyle = action === 'reject' ? 'style="color:var(--danger);"' : action === 'needs_more' ? 'style="color:#9a3412;"' : '';
+    document.getElementById('reviewActions').innerHTML = `<button class="btn btn-outline btn-sm" onclick="closeReview()">取消</button><button class="btn ${confirmClass} btn-sm" ${confirmStyle} onclick="submitReview()">确认</button>`;
+    document.getElementById('reviewModal').style.display = 'flex';
 }
 
 function closeReview() {
@@ -191,86 +376,69 @@ function closeReview() {
 }
 
 async function submitReview() {
+    try {
     const body = {action: currentSub.action, remarks: document.getElementById('reviewRemarks').value.trim()};
+    if (currentSub.action === 'approve') {
+        const score = document.getElementById('reviewScore').value.trim();
+        if (score) body.score = Number(score);
+    }
     if (currentSub.action === 'reassign') {
         body.catalog_item_id = document.getElementById('reassignItemId').value.trim();
         if (!body.catalog_item_id) { alert('请输入项目ID'); return; }
     }
+    await reviewRequest(currentSub.id, body);
+    closeReview();
+    closeDrawer();
+    showToast('操作成功');
+    await loadSubmissions();
+    await loadStats();
+    } catch (err) {
+        alert(`\u5ba1\u6838\u5931\u8d25: ${err.message || '\u540e\u7aef\u9519\u8bef'}`);
+    }
+}
 
+async function reviewRequest(id, body) {
+    const resp = await fetch(`/api/admin/submissions/${id}`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    const raw = await resp.text();
+    let data = {};
+    try { data = raw ? JSON.parse(raw) : {}; } catch (_) { data = {error: raw.slice(0, 160)}; }
+    if (!resp.ok) throw new Error(data.error || '操作失败');
+    return data;
+}
+
+async function bulkApproveHighConfidence() {
+    const rows = window._submissions.filter(s => (s.status === 'pending' || s.status === 'needs_more') && Number(s.ai_confidence || 0) >= 90);
+    if (!rows.length) return;
+    if (!confirm(`确认批量通过 ${rows.length} 条高置信材料？`)) return;
+    document.getElementById('bulkApproveBtn').disabled = true;
     try {
-        const resp = await fetch(`/api/admin/submissions/${currentSub.id}`, {
-            method: 'PUT',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(body)
-        });
-        const data = await resp.json();
-        if (!resp.ok) throw new Error(data.error || '操作失败');
-
-        closeReview();
-        showToast('操作成功');
-        loadSubmissions();
+        for (const row of rows) await reviewRequest(row.id, {action:'approve', remarks:'高置信材料批量通过'});
+        showToast(`已通过 ${rows.length} 条高置信材料`);
+        await loadSubmissions();
+        await loadStats();
     } catch (err) {
         alert(err.message);
     }
 }
 
-function showToast(msg) {
-    const t = document.createElement('div');
-    t.className = 'toast'; t.textContent = msg;
-    document.body.appendChild(t);
-    setTimeout(() => t.remove(), 2500);
+function renderBulkState() {
+    const count = window._submissions.filter(s => (s.status === 'pending' || s.status === 'needs_more') && Number(s.ai_confidence || 0) >= 90).length;
+    document.getElementById('bulkApproveBtn').disabled = count === 0;
+    document.getElementById('bulkApproveHeadBtn').disabled = count === 0;
+    document.getElementById('bulkHint').textContent = count ? `当前页 ${count} 条 Score >= 90，可一键绿灯通过` : '当前页暂无 Score >= 90 的待审材料';
 }
 
-function escHtml(s) {
-    const d = document.createElement('div');
-    d.textContent = s || '';
-    return d.innerHTML;
-}
+function resetAndLoad() { currentPage = 1; loadSubmissions(); }
+function changePage(delta) { currentPage = Math.max(1, Math.min(totalPages, currentPage + delta)); loadSubmissions(); }
+function isImageFile(f) { return ['jpg','jpeg','png','bmp','webp','gif'].includes(String(f.file_type || '').toLowerCase()) || /\.(png|jpe?g|gif|webp|bmp)$/i.test(f.filename || ''); }
+function fileIcon(f) { const t = String(f.file_type || '').toLowerCase(); if (t === 'pdf') return 'fa-file-pdf'; if (t.includes('doc')) return 'fa-file-word'; if (t.includes('xls')) return 'fa-file-excel'; return 'fa-file-alt'; }
+function fileUrl(f) { return f.view_url || `/api/uploads/${f.file_path}`; }
+function shortName(name) { name = String(name || '材料'); return name.length > 8 ? name.slice(0, 7) + '...' : name; }
+function formatScore(score) { const n = Number(score || 0); return Number.isInteger(n) ? String(n) : n.toFixed(1); }
+function escHtml(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+function showToast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2500); }
 
-// Close modal on overlay click
-document.getElementById('reviewModal').addEventListener('click', function(e) {
-    if (e.target === this) closeReview();
-});
-
-// ===== Files Viewer =====
-function showFiles(subId) {
-    const subs = window._submissions || [];
-    const s = subs.find(x => x.id === subId);
-    if (!s || !s.files || s.files.length === 0) { alert('无证明材料'); return; }
-
-    const proofNames = {'appointment':'任职证明/聘书', 'certificate':'荣誉证书/证明', 'award_cert':'获奖证书',
-        'paper_publish':'论文发表证明', 'paper_content':'论文全文', 'project_doc':'立项/结项证明',
-        'project_result':'项目成果证明', 'patent_cert':'专利/软著证书', 'score_report':'成绩单/证书',
-        'cert_file':'等级证书/成绩单', 'transcript':'成绩单', 'admission':'录取证明',
-        'article':'发表文章证明', 'participation':'参赛证明', 'general':'相关证明材料'};
-
-    let html = `<h3>证明材料 - 提交 #${subId}</h3>
-        <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">
-            学生: ${escHtml(s.student_name)} | 项目: ${escHtml(s.title)} | AI置信度: ${Number(s.ai_confidence).toFixed(1)}%
-            ${s.proofs_complete ? ' | <span style="color:var(--success);">材料完整</span>' : (s.missing_proofs && s.missing_proofs.length > 0 ? ` | <span style="color:var(--danger);">缺失: ${s.missing_proofs.join(', ')}</span>` : '')}
-        </p>`;
-
-    html += s.files.map(f => `
-        <div style="display:flex;align-items:center;gap:10px;padding:10px;margin:6px 0;background:var(--surface-alt);border-radius:8px;">
-            <i class="fas ${f.file_type==='pdf'?'fa-file-pdf':(f.file_type.includes('doc')?'fa-file-word':'fa-file-image')}" style="font-size:18px;color:var(--primary);"></i>
-            <div style="flex:1;min-width:0;">
-                <strong style="font-size:13px;">${escHtml(f.filename)}</strong>
-                <span style="font-size:11px;color:var(--text-muted);display:block;">${proofNames[f.proof_type] || f.proof_type || '未分类'} | ${f.uploaded_at}</span>
-            </div>
-            <a href="/api/uploads/${f.file_path}" target="_blank" class="btn btn-outline btn-sm"><i class="fas fa-eye"></i> 查看</a>
-        </div>
-    `).join('');
-
-    const modal = document.getElementById('reviewModal');
-    document.getElementById('reviewModalTitle').textContent = '证明材料详情';
-    document.getElementById('reviewModalInfo').innerHTML = html;
-    document.getElementById('reviewActions').innerHTML = `<button class="btn btn-outline btn-sm" onclick="closeReview()">关闭</button>`;
-    document.getElementById('reassignGroup').style.display = 'none';
-    modal.style.display = 'flex';
-}
-
-loadSubmissions();
-loadStats();
+document.getElementById('reviewModal').addEventListener('click', function(e) { if (e.target === this) closeReview(); });
 
 async function loadStats() {
     try {
@@ -280,9 +448,11 @@ async function loadStats() {
         document.getElementById('statPending').textContent = data.pending_reviews;
         document.getElementById('statApproved').textContent = data.approved_today;
         document.getElementById('statSubmissions').textContent = data.total_submissions;
-    } catch (err) {
-        console.error('Failed to load stats:', err);
-    }
+    } catch (err) { console.error('Failed to load stats:', err); }
 }
+
+loadSubmissions();
+loadStats();
 </script>
 {% endblock %}
+
