@@ -122,6 +122,39 @@ class UploadedFile(db.Model):
         return f'<UploadedFile {self.id} {self.original_filename}>'
 
 
+class AuditLog(db.Model):
+    """双重属性审计日志 — 记录AI模型版本+置信度+管理员操作
+    按照《综测材料AI审核机制设计》"Dual-Attribution Logs"要求实现"""
+    __tablename__ = 'audit_logs'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    submission_id = db.Column(db.Integer, db.ForeignKey('submissions.id'), nullable=False, index=True)
+    action_type = db.Column(db.String(32), nullable=False)  # approve|reject|needs_more|override|auto_approve
+    # AI 端属性
+    ai_model_version = db.Column(db.String(64), default='ai-engine-v3')
+    ai_confidence = db.Column(db.Float, default=0)
+    ai_decision = db.Column(db.String(16), nullable=True)
+    ai_score_suggested = db.Column(db.Float, nullable=True)
+    # 管理端属性
+    admin_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    admin_ip = db.Column(db.String(64), nullable=True)
+    admin_score_set = db.Column(db.Float, nullable=True)
+    admin_decision = db.Column(db.String(16), nullable=True)
+    # 偏差存证 (Override Evidence)
+    override_reason = db.Column(db.String(256), nullable=True)
+    override_detail = db.Column(db.Text, nullable=True)
+    # 审计元数据
+    remarks = db.Column(db.Text, default='')
+    user_agent = db.Column(db.String(512), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+
+    submission = db.relationship('Submission', backref=db.backref('audit_logs', lazy='dynamic'))
+    admin = db.relationship('User', foreign_keys=[admin_id])
+
+    def __repr__(self):
+        return f'<AuditLog {self.id} {self.action_type} sub={self.submission_id}>'
+
+
 class CourseGrade(db.Model):
     """学生学业成绩（按学年存储，支持加权均分和GPA加分计算）"""
     __tablename__ = 'course_grades'

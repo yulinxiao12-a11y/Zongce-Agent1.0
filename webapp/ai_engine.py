@@ -793,9 +793,155 @@ def _build_catalog_index(catalog_items: list) -> dict:
     return {i['id']: i for i in catalog_items}
 
 
+# ══════════════════════════════════════════
+# 材料完整性校验 — 五类必检材料
+# ══════════════════════════════════════════
+
+# 五类必检材料及其信号关键词
+REQUIRED_MATERIALS = {
+    '活动或比赛通知': {
+        'weight': 1.0,
+        'signals': [
+            '通知', '比赛通知', '活动通知', '赛事通知', '报名通知',
+            '竞赛通知', '选拔通知', '关于举办', '大赛通知', '征文通知',
+            '比赛公告', '赛事公告', '活动公告', '选拔赛', '报名开始',
+        ],
+        'boost_signals': ['关于', '通知', '公告'],
+    },
+    '参赛或参与证明': {
+        'weight': 1.0,
+        'signals': [
+            '参赛证明', '参与证明', '参赛', '参加', '参与者', '参赛者',
+            '队员', '组员', '成员', '报名成功', '报名确认', '注册成功',
+            '录用', '录取', '志愿时长', '服务时长', '签到', '参与活动',
+            '入选', '入围', '参赛队', '团队', '项目成员',
+        ],
+        'boost_signals': ['证明', '参赛', '参与', '录用'],
+    },
+    '结果证明': {
+        'weight': 1.2,
+        'signals': [
+            '一等奖', '二等奖', '三等奖', '特等奖', '金奖', '银奖', '铜奖',
+            '优秀奖', '冠军', '亚军', '季军', '获奖', '荣誉证书', '表彰',
+            '合格', '通过', '成绩', '得分', '颁发', '授予', '荣获',
+            '获评', '评为', '被评为', '奖状', '结业证书', '毕业证',
+            '名次', '第.*名', '称号', '先进个人', '优秀学生',
+        ],
+        'boost_signals': ['证书', '获奖', '奖', '等奖'],
+    },
+    '官方来源证明': {
+        'weight': 1.0,
+        'signals': [
+            '公章', '盖章', '印发', '签发', '证书编号', '注册号',
+            '证书号', '批准文号', '文件号', '教育部', '省教育厅',
+            '考试院', '工业和信息化部', '国家知识产权局', '版权局',
+            '共青团', '人力资源社会保障', '全国大学英语', '全国计算机等级',
+            '国家卫生健康委', '组委会', '中国计算机学会', '中国人工智能学会',
+            '中国电子学会', '中国数学会', '高等学校', '大学', '学院',
+            '官方', '官方网站', '学信网', '教务系统', '志愿时', '易班',
+            '粤志愿', 'i志愿', '到梦空间', '青志', '第二课堂',
+        ],
+        'boost_signals': ['公章', '证书编号', '教育部', '组委会'],
+    },
+    '个人身份匹配证明': {
+        'weight': 1.0,
+        'signals': [
+            '姓名', '学号', '身份证', '院系', '专业', '班级',
+            '性别', '出生', '入学年份', '考生号', '准考证号',
+            '所属学院', '在读', '学生', '同学',
+        ],
+        'boost_signals': ['姓名', '学号', '身份证'],
+    },
+}
+
+
+def _check_material_completeness(text: str, filename: str = '',
+                                  student_name: str = '', student_id: str = '') -> dict:
+    """检查五类必检材料在文本中的覆盖情况，返回完整度评分
+
+    返回:
+        {
+            'score': int,           # 该维度评分数(-15 ~ +12)
+            'matched': [str],       # 已匹配的材料类型名称列表
+            'missing': [str],       # 缺失的材料类型名称列表
+            'ratio': float,         # 覆盖率 0.0 ~ 1.0
+            'detail': str,          # 详细描述
+        }
+    """
+    source = f'{filename}\n{text or ""}'
+    # 额外注入学生身份信息到搜索空间
+    if student_name:
+        source += f'\n姓名:{student_name}'
+    if student_id:
+        source += f'\n学号:{student_id}'
+
+    matched = []
+    missing = []
+    details = []
+
+    for mat_name, mat_config in REQUIRED_MATERIALS.items():
+        signals = mat_config['signals']
+        boost = mat_config.get('boost_signals', [])
+        # 使用正则匹配而非简单 in 检查，支持"第.*名"等模式
+        hit = False
+        hit_signals = []
+        for s in signals:
+            try:
+                if re.search(s, source):
+                    hit = True
+                    hit_signals.append(s)
+            except re.error:
+                if s in source:
+                    hit = True
+                    hit_signals.append(s)
+        # 检查boost信号以加强确认
+        boost_hits = [bs for bs in boost if bs in source]
+        if hit or (boost_hits and len(boost_hits) >= 2):
+            matched.append(mat_name)
+            details.append(f'✓{mat_name}({",".join(hit_signals[:2])})')
+        else:
+            missing.append(mat_name)
+            details.append(f'✗{mat_name}')
+
+    ratio = len(matched) / 5.0
+    matched_count = len(matched)
+
+    # 评分映射
+    if matched_count == 5:
+        score = 12
+        label = '材料完整性极高，五类必检材料齐全'
+    elif matched_count == 4:
+        score = 8
+        label = f'材料较完整，4/5类已提供，缺: {",".join(missing)}'
+    elif matched_count == 3:
+        score = 3
+        label = f'材料基本完整，3/5类已提供，缺: {",".join(missing)}'
+    elif matched_count == 2:
+        score = -3
+        label = f'材料完整性不足，仅2/5类，缺: {",".join(missing)}'
+    elif matched_count == 1:
+        score = -8
+        label = f'材料严重不完整，仅1/5类，缺: {",".join(missing)}'
+    else:
+        score = -15
+        label = '几乎无有效证明材料，五类必检材料全部缺失'
+
+    return {
+        'score': score,
+        'matched': matched,
+        'missing': missing,
+        'ratio': ratio,
+        'matched_count': matched_count,
+        'detail': ' | '.join(details),
+        'label': label,
+    }
+
+
 def _score_confidence(match: dict, extracted_text: str, filename: str = '',
                      student_name: str = '', student_id: str = '') -> dict:
-    """多维度置信度评估：综合材料权威性、成果完成度、完整性等因素调整置信度"""
+    """多维度置信度评估：综合材料权威性、成果完成度、完整性等因素调整置信度
+    八维评估矩阵: D1材料证明力 D2成果完成度 D3负面信号 D4OCR质量
+                 D5身份匹配 D6颁发机构 D7文件名 D8材料完整性 D9级别吻合"""
     base_conf = match.get('confidence', 50)
     reasons = []
     adjustments = []
@@ -928,7 +1074,19 @@ def _score_confidence(match: dict, extracted_text: str, filename: str = '',
             adjustments.append(('文件名含信号', 3))
 
     # ════════════════════════════════════════
-    # 因素8: 材料级别与项目级别一致性
+    # 因素8: 材料完整性 — 五类必检材料覆盖度
+    # ════════════════════════════════════════
+    completeness = _check_material_completeness(
+        text, filename, student_name, student_id
+    )
+    comp_score = completeness['score']
+    adjustments.append((f'材料完整性({completeness["matched_count"]}/5)', comp_score))
+    reasons.append(completeness['label'])
+    # 保存完整度结果供后续审核使用
+    match['_material_completeness'] = completeness
+
+    # ════════════════════════════════════════
+    # 因素9: 材料级别与项目级别一致性
     # ════════════════════════════════════════
     item_level = match.get('level', '')
     text_level = detect_level(text)
@@ -938,24 +1096,39 @@ def _score_confidence(match: dict, extracted_text: str, filename: str = '',
         # 已在 _validate_matches 中处理，这里微调
         pass
 
-    # ════════════════ 汇总 ════════════════
+    # ════════════════ 汇总（八维评估 + 标定上限） ════════════════
     total_adjustment = sum(adj for _, adj in adjustments if adj != 0)
     new_conf = base_conf + total_adjustment
     cap, cap_reasons = _strict_confidence_cap(match, extracted_text, filename, student_name, student_id)
     if cap_reasons:
         reasons.extend(cap_reasons)
-        adjustments.append(('?????', cap - 98))
+    # ── 材料完整性独立上限 ──
+    comp_ratio = completeness['ratio']
+    if comp_ratio < 0.4:       # < 2/5 类材料
+        cap = min(cap, 60)
+        reasons.append(f'材料完整度仅{int(comp_ratio*100)}%，上限降至60%')
+    elif comp_ratio < 0.6:     # < 3/5 类材料
+        cap = min(cap, 75)
+        reasons.append(f'材料完整度仅{int(comp_ratio*100)}%，上限降至75%')
     new_conf = max(5, min(98, new_conf, cap))
 
-    # 负向信号极多时直接标记为高风险
+    # ── 风险等级与决策（文档标准：≥95%高置信直通） ──
     risk_level = 'low'
-    if neg_penalty <= -30:
+    if neg_penalty <= -30 or comp_ratio < 0.2:
         risk_level = 'high'
-    elif neg_penalty <= -15 or text_len < 20:
+    elif neg_penalty <= -15 or text_len < 20 or comp_ratio < 0.4:
         risk_level = 'medium'
 
     match['confidence'] = new_conf
-    match['decision'] = 'high' if new_conf >= 80 else ('medium' if new_conf >= 40 else 'low')
+    # ── 置信度标定 (Temperature Scaling + Isotonic Regression) ──
+    try:
+        from calibration import apply_calibration
+        match = apply_calibration(match)
+    except ImportError:
+        # 降级: 仅用原始分数
+        match['confidence_calibrated'] = False
+    # 决策阈值按文档设计: ≥95%→high, ≥60%→medium, <60%→low
+    match['decision'] = 'high' if match['confidence'] >= 95 else ('medium' if match['confidence'] >= 60 else 'low')
     match['risk_level'] = risk_level
 
     # 构建详细理由
@@ -1285,20 +1458,41 @@ def _build_audit_payload(match: dict, extracted_text: str, filename: str,
         risk_tags.append('DATE_UNCLEAR')
         missing_fields.append({
             'field_key': 'date_proof',
-            'field_name': '??/??????',
-            'guidance_tips': '?????????????????????????',
+            'field_name': '获奖/完成日期',
+            'guidance_tips': '请补充证书或证明的具体日期，便于核对材料时效性。',
         })
     if ('??' in match.get('title', '') or '?' in match.get('title', '')) and not features.get('award_level_detail'):
         risk_tags.append('AWARD_LEVEL_UNCLEAR')
         missing_fields.append({
             'field_key': 'award_level_proof',
-            'field_name': '???????????',
-            'guidance_tips': '??????????/?/?/???????/???/???????',
+            'field_name': '获奖等级证明',
+            'guidance_tips': '请明确奖项等级(国家级/省级/校级/院级)和获奖等级(一等奖/二等奖/三等奖等)。',
         })
     if confidence < 60:
         risk_tags.append('LOW_CONFIDENCE')
     elif confidence < 90 and not risk_tags:
         risk_tags.append('HUMAN_CONFIRM_REQUIRED')
+
+    # ── 材料完整性风控 ──
+    completeness = match.get('_material_completeness', {})
+    if completeness:
+        comp_ratio = completeness.get('ratio', 1.0)
+        if comp_ratio < 0.4:
+            risk_tags.append('MATERIAL_INCOMPLETE')
+            for mat_name in completeness.get('missing', []):
+                missing_fields.append({
+                    'field_key': f'required_{mat_name}',
+                    'field_name': mat_name,
+                    'guidance_tips': f'请补充"{mat_name}"相关材料（五类必检材料之一）',
+                })
+        elif comp_ratio < 0.6:
+            risk_tags.append('MATERIAL_PARTIAL')
+            for mat_name in completeness.get('missing', [])[:2]:
+                missing_fields.append({
+                    'field_key': f'required_{mat_name}',
+                    'field_name': mat_name,
+                    'guidance_tips': f'建议补充"{mat_name}"以提高审核通过率',
+                })
 
     # De-duplicate while preserving order.
     risk_tags = list(dict.fromkeys(risk_tags))
@@ -1317,6 +1511,14 @@ def _build_audit_payload(match: dict, extracted_text: str, filename: str,
     ]
     if risk_tags:
         audit_chain.append(f"Step 4: 触发风控标签 {', '.join(risk_tags)}，需管理员复核或要求补件。")
+    # 材料完整性审计
+    if completeness:
+        audit_chain.append(
+            f"Step 5: 五类必检材料覆盖度 {int(completeness.get('ratio',0)*100)}%"
+            f"({completeness.get('matched_count',0)}/5)，"
+            f"已匹配: {', '.join(completeness.get('matched',[]))}，"
+            f"缺失: {', '.join(completeness.get('missing',[]))}"
+        )
 
     return {
         'status': _audit_status(confidence, risk_tags, deduped_missing),
@@ -1458,6 +1660,7 @@ def analyze_files(uploaded_files: list, catalog_items: list,
     student_name/student_id 用于多维度置信度评估中的身份验证"""
     results = []
     llm_ok = _get_llm()
+    catalog_by_id = _build_catalog_index(catalog_items)
 
     for uf in uploaded_files:
         fp = uf.get('file_path', '')
@@ -1481,7 +1684,41 @@ def analyze_files(uploaded_files: list, catalog_items: list,
                 matches = lm
                 ai_enhanced = True
 
-        # Step 3: 降级 — 关键词规则匹配
+        # Step 3: 降级 — 混合检索引擎匹配 (BM25 + TF-IDF)
+        if not matches:
+            try:
+                from retrieval import semantic_match
+                detected_lvl = detect_level(extracted) if extracted.strip() else ''
+                detected_cat = detect_category(extracted) if extracted.strip() else ''
+                hybrid_results = semantic_match(
+                    f'{fname} {extra_keyword} {extracted}',
+                    catalog_items, top_k=15
+                )
+                # 将检索分数转换为置信度 (hybrid_score: 0~1+ → confidence: 30~95)
+                for hr in hybrid_results:
+                    raw_hybrid = hr.get('hybrid_score', 0)
+                    # 映射: hybrid 0.5→30%, 0.7→60%, 0.9→85%, 1.0+→95%
+                    mapped_conf = int(min(95, max(5, raw_hybrid * 95)))
+                    item = catalog_by_id.get(hr['id'], {})
+                    matches.append({
+                        'id': hr['id'],
+                        'title': hr.get('title', item.get('title', '')),
+                        'description': item.get('description', ''),
+                        'category': hr.get('category', item.get('category', '')),
+                        'category_name': item.get('category_name', ''),
+                        'level': hr.get('level', item.get('level', '')),
+                        'score_val': hr.get('score_val', item.get('score', 0)),
+                        'icon': item.get('icon', 'fa-star'),
+                        'section': hr.get('section', item.get('section', '')),
+                        'note': item.get('note', ''),
+                        'confidence': mapped_conf,
+                        'raw_score': raw_hybrid * 100,
+                        'reasons': [f'混合检索(BM25={hr["bm25_score"]:.1f}+TFIDF={hr["tfidf_score"]:.2f})'],
+                    })
+            except ImportError:
+                pass
+
+        # Step 3b: 二次降级 — 传统关键词规则 (当检索模块不可用时)
         if not matches:
             matches = match_catalog_items(
                 text=extracted, catalog_items=catalog_items,
@@ -1489,7 +1726,7 @@ def analyze_files(uploaded_files: list, catalog_items: list,
             )
 
         # Step 4: 多维度置信度评估
-        confidence_text = extracted if extracted.strip() else f"{fname} {extra_keyword}".strip()
+        confidence_text = (f'{fname} {extra_keyword} {extracted}').strip()
         for m in matches:
             m = _score_confidence(m, confidence_text, fname, student_name, student_id)
             if not m.get('category_name'):
@@ -1500,11 +1737,43 @@ def analyze_files(uploaded_files: list, catalog_items: list,
                 }.get(m.get('category', ''), '')
             m['audit'] = _build_audit_payload(m, extracted, fname, student_name, student_id)
 
+        # Step 5: 确定性规则算分 — 身份系数折算 + 归一化
+        try:
+            from score_calculator import calculate_deterministic_score
+            for m in matches:
+                m = calculate_deterministic_score(m, confidence_text)
+                # 用确定性分数覆盖LLM返回的分数
+                m['score_val'] = m.get('deterministic_score', m.get('score_val', 0))
+        except ImportError:
+            pass
+
+        # Step 5b: 易混淆项精细化区分 — 对重叠匹配进行置信度惩罚/奖励
+        if len(matches) >= 2:
+            try:
+                from confusion_resolver import apply_confusion_resolution
+                matches = apply_confusion_resolution(matches, confidence_text)
+            except ImportError:
+                pass
+
+        # Step 6: 图像防伪取证 — ELA + Exif + 公章检测
+        forensic = None
+        if fp and os.path.exists(fp) and ftype and ftype.lower() in (
+            'image', 'jpg', 'jpeg', 'png', 'bmp', 'gif', 'webp'
+        ):
+            try:
+                from image_forensics import forensic_analysis, apply_forensic_penalty
+                forensic = forensic_analysis(fp)
+                for m in matches:
+                    m = apply_forensic_penalty(m, forensic)
+            except ImportError:
+                pass
+
         results.append({
             'file_id': uf.get('id'), 'filename': fname,
             'extracted_text': extracted[:500], 'extracted_text_full': extracted,
             'has_text_content': bool(extracted.strip()),
             'matches': matches, 'ai_enhanced': ai_enhanced,
+            'forensic': forensic,  # 图像取证结果
         })
     return results
 

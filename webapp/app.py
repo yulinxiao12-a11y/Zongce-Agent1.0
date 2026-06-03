@@ -19,7 +19,7 @@ from flask_login import (LoginManager, login_user, logout_user, login_required,
                          current_user, UserMixin)
 
 from catalog import CATALOG, CAT_INFO, SUBCAT_NAMES, get_required_proofs
-from models import db, User, CatalogItem, UserItem, Submission, UploadedFile, RegulationDoc, CourseGrade
+from models import db, User, CatalogItem, UserItem, Submission, UploadedFile, RegulationDoc, CourseGrade, AuditLog
 from ai_engine import analyze_files, ai_suggest_item_fields
 from competitions_data import COMPETITIONS
 from activities_data import load_activities, add_activity, update_activity, delete_activity
@@ -2376,6 +2376,21 @@ def api_admin_submissions():
                 'uploaded_at': uf.uploaded_at.strftime('%Y-%m-%d %H:%M'),
             })
 
+        # ── HITL 智能路由队列计算 ──
+        # 绿色(≥95%): AI可自动通过  |  黄色(<95%): 需人工复核  |  红色: 高危欺诈
+        ai_conf = round(s.ai_confidence, 1)
+        risk_tags = proof_info.get('risk_assessment', {}).get('risk_tags', [])
+        audit_status = proof_info.get('audit', {}).get('status', '')
+        if 'TAMPER_SUSPECTED' in risk_tags or audit_status == 'HIGH_RISK' or ai_conf < 40:
+            routing_queue = 'fraud_alert'
+            routing_label = '🔴 高危欺诈'
+        elif ai_conf >= 95:
+            routing_queue = 'auto_approve'
+            routing_label = '🟢 建议通过'
+        else:
+            routing_queue = 'human_review'
+            routing_label = '🟡 需人工复核'
+
         items.append({
             'id': s.id,
             'student_id': student.student_id if student else '',
@@ -2386,9 +2401,11 @@ def api_admin_submissions():
             'proof_filename': s.proof_filename,
             'completion_date': s.completion_date.strftime('%Y-%m-%d') if s.completion_date else '',
             'status': s.status,
-            'ai_confidence': round(s.ai_confidence, 1),
+            'ai_confidence': ai_conf,
             'ai_decision': s.ai_decision,
             'ai_reason': s.ai_reason,
+            'routing_queue': routing_queue,
+            'routing_label': routing_label,
             'review_remarks': s.review_remarks,
             'score': ci.score if ci else proof_info.get('manual_score', 0),
             'level': ci.level if ci else proof_info.get('manual_level', ''),
@@ -2428,8 +2445,30 @@ def api_review_submission(sub_id):
         sub.review_remarks = data.get('remarks', '')
         sub.reviewed_at = datetime.utcnow()
 
+        # ── 强制偏差存证: 管理员覆盖AI判定时需提供原因 ──
+        try:
+            proof_info = json.loads(sub.ai_matched_items) if sub.ai_matched_items else {}
+        except Exception:
+            proof_info = {}
+        ai_suggested = proof_info.get('audit', {}).get('matched_regulation', {}).get('score_calculated', 0)
+        admin_score = data.get('score', 0)
+
+        override_reason = data.get('override_reason', '')
+        if admin_score and ai_suggested and abs(admin_score - ai_suggested) > 0.5:
+            if not override_reason:
+                return jsonify({
+                    'error': '检测到覆盖AI判定，请提供修改原因',
+                    'code': 'override_reason_required',
+                    'ai_suggested': ai_suggested,
+                }), 400
+            # 记录偏差存证
+            sub.review_remarks = (
+                f'[人工覆盖] AI建议{ai_suggested}分→管理员设定{admin_score}分。'
+                f'原因: {override_reason}。备注: {data.get("remarks", "")}'
+            )
+
         # Create UserItem
-        score = data.get('score', 0)
+        score = admin_score or 0
         catalog_id = sub.catalog_item_id
         custom_title = None
         custom_score = None
@@ -2438,11 +2477,7 @@ def api_review_submission(sub_id):
             if ci:
                 score = ci.score
         else:
-            try:
-                proof_info = json.loads(sub.ai_matched_items) if sub.ai_matched_items else {}
-            except Exception:
-                proof_info = {}
-            score = data.get('score', proof_info.get('manual_score', score))
+            score = admin_score or proof_info.get('manual_score', score)
             custom_score = score
             custom_title = sub.title
 
@@ -2487,8 +2522,117 @@ def api_review_submission(sub_id):
             sub.title = ci.title
             sub.description = ci.description
 
+    # ── 双重审计日志 — 记录AI+管理员双端属性 ──
+    ai_matched = {}
+    try:
+        ai_matched = json.loads(sub.ai_matched_items) if sub.ai_matched_items else {}
+    except Exception:
+        pass
+    ai_suggested_score = ai_matched.get('audit', {}).get('matched_regulation', {}).get('score_calculated', 0)
+    admin_ip = request.headers.get('X-Forwarded-For', request.remote_addr or '')
+    user_agent = request.headers.get('User-Agent', '')[:512]
+
+    audit = AuditLog(
+        submission_id=sub.id,
+        action_type=action,
+        ai_model_version='ai-engine-v3',
+        ai_confidence=sub.ai_confidence or 0,
+        ai_decision=sub.ai_decision or '',
+        ai_score_suggested=ai_suggested_score,
+        admin_id=current_user.id,
+        admin_ip=admin_ip,
+        admin_score_set=data.get('score'),
+        admin_decision=action,
+        override_reason=data.get('override_reason', ''),
+        override_detail=data.get('remarks', ''),
+        remarks=data.get('remarks', ''),
+        user_agent=user_agent,
+    )
+    db.session.add(audit)
+
     db.session.commit()
     return jsonify({'success': True, 'status': sub.status})
+
+
+@app.route('/api/admin/submissions/batch-approve', methods=['POST'])
+@admin_required
+def api_batch_approve():
+    """批量批准高置信度(≥95%)申请 — 直通式处理(STP)"""
+    data = request.get_json()
+    sub_ids = data.get('ids', [])
+    if not sub_ids:
+        return jsonify({'error': '请选择要批准的申请'}), 400
+
+    approved_count = 0
+    skipped_count = 0
+    errors = []
+
+    for sub_id in sub_ids:
+        sub = Submission.query.get(sub_id)
+        if not sub:
+            errors.append(f'#{sub_id}: 不存在')
+            skipped_count += 1
+            continue
+        if sub.status not in ('pending', 'needs_more', 'pending_ai', 'pending_human'):
+            errors.append(f'#{sub_id}: 状态为{sub.status}，不可批量操作')
+            skipped_count += 1
+            continue
+
+        # 批量通过仅限高置信度申请
+        if sub.ai_confidence and sub.ai_confidence < 95:
+            errors.append(f'#{sub_id}: 置信度{sub.ai_confidence}%<95%，需人工复核')
+            skipped_count += 1
+            continue
+
+        try:
+            sub.status = 'approved'
+            sub.reviewer_id = current_user.id
+            sub.review_remarks = f'[批量STP] AI置信度{sub.ai_confidence}%，自动通过'
+            sub.reviewed_at = datetime.utcnow()
+
+            score = 0
+            if sub.catalog_item_id:
+                ci = CatalogItem.query.get(sub.catalog_item_id)
+                if ci:
+                    score = ci.score
+
+            if not UserItem.query.filter_by(user_id=sub.user_id, submission_id=sub.id).first():
+                ui = UserItem(
+                    user_id=sub.user_id,
+                    catalog_item_id=sub.catalog_item_id,
+                    score=score,
+                    completion_date=sub.completion_date,
+                    source='upload',
+                    submission_id=sub.id,
+                )
+                db.session.add(ui)
+            # ── 审计日志：批量STP ──
+            admin_ip = request.headers.get('X-Forwarded-For', request.remote_addr or '')
+            audit = AuditLog(
+                submission_id=sub.id,
+                action_type='auto_approve',
+                ai_model_version='ai-engine-v3',
+                ai_confidence=sub.ai_confidence or 0,
+                ai_decision=sub.ai_decision or '',
+                admin_id=current_user.id,
+                admin_ip=admin_ip,
+                admin_decision='approve',
+                remarks=f'[批量STP] AI置信度{sub.ai_confidence}%≥95%，自动通过',
+                user_agent=request.headers.get('User-Agent', '')[:512],
+            )
+            db.session.add(audit)
+            approved_count += 1
+        except Exception as e:
+            errors.append(f'#{sub_id}: {str(e)}')
+            skipped_count += 1
+
+    db.session.commit()
+    return jsonify({
+        'success': True,
+        'approved': approved_count,
+        'skipped': skipped_count,
+        'errors': errors,
+    })
 
 
 # ============================================================
@@ -2795,18 +2939,33 @@ def api_admin_stats():
         opportunity_count = len(load_activities())
     except Exception:
         opportunity_count = 0
+
+    # ── HITL 智能路由统计 ──
+    pending_reviews = Submission.query.filter(
+        Submission.status.in_(['pending', 'needs_more', 'pending_ai', 'pending_human'])
+    ).all()
+    auto_approve_count = sum(1 for s in pending_reviews if s.ai_confidence and s.ai_confidence >= 95)
+    human_review_count = sum(1 for s in pending_reviews if s.ai_confidence and 40 <= s.ai_confidence < 95)
+    fraud_alert_count = sum(1 for s in pending_reviews if s.ai_confidence and s.ai_confidence < 40)
+
     return jsonify({
         'opportunity_count': opportunity_count,
         'application_count': Submission.query.count(),
-        'pending_count': Submission.query.filter(Submission.status.in_(['pending', 'needs_more'])).count(),
+        'pending_count': len(pending_reviews),
         'approved_score': round(float(approved_score), 1),
         'total_students': User.query.filter_by(role='student', is_active=True).count(),
-        'pending_reviews': Submission.query.filter(Submission.status.in_(['pending', 'needs_more'])).count(),
+        'pending_reviews': len(pending_reviews),
         'approved_today': Submission.query.filter(
             Submission.status.in_(['approved', 'auto_approved']),
             Submission.reviewed_at >= date.today()
         ).count(),
         'total_submissions': Submission.query.count(),
+        # HITL routing queue counts
+        'routing': {
+            'auto_approve': auto_approve_count,
+            'human_review': human_review_count,
+            'fraud_alert': fraud_alert_count,
+        },
     })
 
 

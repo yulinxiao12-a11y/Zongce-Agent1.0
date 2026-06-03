@@ -327,6 +327,7 @@ const filters = reactive({
 
 const materialParsing = ref(false)
 const materialSubmitMode = ref<'match' | 'targeted'>('match')
+const showAuditProgressModal = ref(false)
 const materialSelectedFiles = ref<File[]>([])
 const materialServerFiles = ref<UploadedFile[]>([])
 const materialAnalysisResults = ref<AnalyzeResult[]>([])
@@ -691,6 +692,25 @@ function confidenceClass(value: number) {
 function sourceConfidence(value: number) {
   return value > 1 ? value / 100 : value
 }
+
+// ── 审核进度弹窗数据 ──
+const auditProgressItems = computed(() => {
+  const list = summary.value?.pending_applications || []
+  return (list as any[]).map((item: any) => ({
+    id: item.id,
+    title: item.title || item.opportunity_title || '未命名',
+    category: item.dimension || 'academic',
+    category_name: item.dimension === 'arts_sports' ? '文体表现' : item.dimension === 'moral' ? '品德行为表现' : '学业表现',
+    level: item.award_level || item.level || '-',
+    score: Number(item.suggested_score || 0),
+    confidence: Number(item.ai_confidence > 1 ? item.ai_confidence : (item.ai_confidence || 0) * 100),
+    status: item.status || 'pending',
+    files: (item.files || []) as Array<{ id: number; name: string; filename?: string; url: string; view_url?: string }>,
+    ai_reason: (item.ai_review?.recognized_text || item.ai_reason || ''),
+    risk_tags: (item.risk_tags || []) as string[],
+    review_remarks: item.review_remarks || item.admin_comment || '',
+  }))
+})
 
 function sourceStatus(status: string) {
   if (status === 'pending') return 'pending_human'
@@ -2419,7 +2439,19 @@ async function submitMatchedMaterial(result: AnalyzeResult, match: AnalyzeMatch)
     ElMessage.success(response.status === 'needs_more' ? '已提交审核，系统已标记需补充佐证' : '已提交审核，等待管理端终审')
     await loadAll()
   } catch (error) {
-    ElMessage.error((error as Error).message)
+    const msg = (error as Error).message
+    // 409 重复提交 → 友好提示，不是真正的错误
+    if (msg.includes('duplicate') || msg.includes('重复') || msg.includes('已有')) {
+      ElMessage.warning('该项目已提交过，请勿重复提交')
+      await loadAll()
+      return
+    }
+    // 400 缺失文件 → 具体引导
+    if (msg.includes('证明文件') || msg.includes('请先上传')) {
+      ElMessage.warning('请先上传证明材料文件')
+      return
+    }
+    ElMessage.error(msg.length > 100 ? msg.slice(0, 100) + '...' : msg)
   }
 }
 
@@ -2800,7 +2832,7 @@ onMounted(async () => {
             <div class="score-copy">
               <span class="eyebrow">综合测评总分</span>
               <div class="score-number">{{ summary?.score.total ?? '--' }}</div>
-              <p>待审核潜在加分 {{ summary?.pending_score ?? 0 }}，距离 90 分目标还差 {{ summary?.goal_gap ?? 0 }}。</p>
+              <p>{{ auditProgressItems.length }} 项待审核（潜在加分 {{ summary?.pending_score ?? 0 }}），距离 90 分目标还差 {{ summary?.goal_gap ?? 0 }}。</p>
               <div class="hero-actions">
                 <button class="btn-primary-sm" @click="activeStudentTab = '机会大厅'">去找加分机会</button>
                 <button class="btn-ghost" @click="activeStudentTab = '智审中心'">提交材料认证</button>
@@ -2822,10 +2854,10 @@ onMounted(async () => {
               <small>权重 {{ Math.round(item.weight * 100) }}%</small>
             </div>
             <div class="stat-divider" />
-            <div class="stat-item accent-stat">
+            <div class="stat-item accent-stat audit-progress-stat" title="点击查看各项目审核进度与详情" @click="showAuditProgressModal = true">
               <span>待审核</span>
-              <strong>{{ summary?.pending_score ?? 0 }}</strong>
-              <small>AI 初审后人工确认</small>
+              <strong>{{ auditProgressItems.length }}</strong>
+              <small>点击查看进度详情</small>
             </div>
           </div>
 
@@ -3105,8 +3137,8 @@ onMounted(async () => {
                     </div>
                     <div class="source-confidence">
                       <span :class="matchConfidenceClass(match.confidence)">{{ match.confidence.toFixed(1) }}%</span>
-                      <button class="source-primary-small" :disabled="isMaterialAdded(result, match)" @click="submitMatchedMaterial(result, match)">
-                        {{ isMaterialAdded(result, match) ? '已提交' : '提交整组审核' }}
+                      <button class="source-primary-small" @click="submitMatchedMaterial(result, match)">
+                        提交整组审核
                       </button>
                     </div>
                   </div>
@@ -3181,23 +3213,6 @@ onMounted(async () => {
             </div>
           </div>
 
-          <div v-if="materialAddedItems.length" class="source-card added-materials">
-            <header>已提交/加入</header>
-            <table>
-              <thead><tr><th>来源文件</th><th>匹配项目</th><th>大类</th><th>级别</th><th>得分</th><th>置信度</th><th>状态</th></tr></thead>
-              <tbody>
-                <tr v-for="item in materialAddedItems" :key="`${item.fileId}-${item.id}`">
-                  <td>{{ item.filename }}</td>
-                  <td>{{ item.title }}</td>
-                  <td>{{ item.category_name || item.category }}</td>
-                  <td>{{ item.level }}</td>
-                  <td>+{{ item.score }}</td>
-                  <td>{{ item.confidence.toFixed(1) }}%</td>
-                  <td>{{ statusLabel(sourceStatus(item.status)) }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
         </section>
 
         <section
@@ -4118,5 +4133,56 @@ onMounted(async () => {
         </button>
       </template>
     </el-dialog>
+
+    <!-- ====== 审核进度弹窗 ====== -->
+    <el-dialog v-model="showAuditProgressModal" width="820px" class="audit-progress-dialog" :close-on-click-modal="true">
+      <template #header>
+        <strong>审核进度详情</strong>
+        <span style="font-size:12px;color:var(--text-muted);margin-left:8px;">共 {{ auditProgressItems.length }} 项</span>
+      </template>
+
+      <div v-if="!auditProgressItems.length" style="text-align:center;padding:40px;color:var(--text-muted);">
+        <strong style="font-size:48px;">📭</strong>
+        <p>暂无待审核项目</p>
+        <span>提交材料认证后，AI 将自动分析并匹配综测项目</span>
+      </div>
+
+      <div v-else class="audit-progress-list">
+        <div v-for="item in auditProgressItems" :key="item.id" class="audit-progress-card">
+          <div class="apc-header">
+            <strong class="apc-title">{{ item.title }}</strong>
+            <span :class="['apc-status', item.status === 'approved' || item.status === 'auto_approved' ? 'approved' : item.status === 'rejected' ? 'rejected' : 'pending']">
+              {{ item.status === 'approved' || item.status === 'auto_approved' ? '已通过' : item.status === 'rejected' ? '已驳回' : item.status === 'needs_more' ? '需补材料' : '待审核' }}
+            </span>
+          </div>
+          <div class="apc-meta">
+            <span>{{ item.category_name || item.category }}</span>
+            <span>{{ item.level || '-' }}</span>
+            <span>+{{ item.score }}分</span>
+          </div>
+          <div class="apc-confidence-row">
+            <span>AI 置信率</span>
+            <div class="apc-confidence-bar">
+              <div class="apc-confidence-fill" :style="{ width: item.confidence + '%', background: item.confidence >= 80 ? '#10b981' : item.confidence >= 50 ? '#f59e0b' : '#ef4444' }" />
+            </div>
+            <strong :style="{ color: item.confidence >= 80 ? 'var(--success)' : item.confidence >= 50 ? 'var(--accent-amber)' : 'var(--danger)' }">{{ item.confidence.toFixed(1) }}%</strong>
+          </div>
+          <div v-if="item.risk_tags.length" class="apc-tags">
+            <span v-for="tag in item.risk_tags" :key="tag" class="apc-tag">{{ tag }}</span>
+          </div>
+          <div v-if="item.ai_reason" class="apc-reason">{{ item.ai_reason.slice(0, 120) }}{{ item.ai_reason.length > 120 ? '...' : '' }}</div>
+          <div v-if="item.review_remarks" class="apc-remarks">
+            <strong>审核备注：</strong>{{ item.review_remarks }}
+          </div>
+          <div class="apc-files" v-if="item.files && item.files.length">
+            <strong>证明材料：</strong>
+            <a v-for="f in item.files" :key="f.id" :href="f.url || ('/api/uploads/' + f.id)" target="_blank" class="apc-file-link">
+              📎 {{ f.name || f.filename || '查看材料' }}
+            </a>
+          </div>
+        </div>
+      </div>
+    </el-dialog>
+
   </main>
 </template>
