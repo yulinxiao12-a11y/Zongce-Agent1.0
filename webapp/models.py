@@ -19,6 +19,7 @@ class User(UserMixin, db.Model):
     role = db.Column(db.String(16), default='student')
     department = db.Column(db.String(128), default='电子与信息学院')
     class_name = db.Column(db.String(64), default='')
+    gpa_score = db.Column(db.Float, nullable=True)  # 学生填写的学年必修课/限选课均分
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -62,6 +63,7 @@ class UserItem(db.Model):
     source = db.Column(db.String(16), default='manual')
     submission_id = db.Column(db.Integer, db.ForeignKey('submissions.id'), nullable=True)
     completion_date = db.Column(db.Date, nullable=True)
+    academic_year = db.Column(db.String(16), default='2025-2026', index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     catalog_item = db.relationship('CatalogItem', lazy='joined')
@@ -81,6 +83,7 @@ class Submission(db.Model):
     proof_filename = db.Column(db.String(256), nullable=True)
     proof_filepath = db.Column(db.String(512), nullable=True)
     completion_date = db.Column(db.Date, nullable=True)
+    academic_year = db.Column(db.String(16), default='2025-2026', index=True)
     status = db.Column(db.String(16), default='pending', index=True)
     ai_confidence = db.Column(db.Float, default=0)
     ai_decision = db.Column(db.String(16), nullable=True)
@@ -117,6 +120,27 @@ class UploadedFile(db.Model):
 
     def __repr__(self):
         return f'<UploadedFile {self.id} {self.original_filename}>'
+
+
+class CourseGrade(db.Model):
+    """学生学业成绩（按学年存储，支持加权均分和GPA加分计算）"""
+    __tablename__ = 'course_grades'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    academic_year = db.Column(db.String(16), nullable=False, index=True)
+    course_name = db.Column(db.String(128), nullable=False)
+    grade = db.Column(db.Float, nullable=False)
+    credits = db.Column(db.Float, nullable=False)
+    course_type = db.Column(db.String(16), nullable=False, default='必修')
+    ocr_source = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = db.relationship('User', backref=db.backref('course_grades', lazy='dynamic'))
+
+    def __repr__(self):
+        return f'<CourseGrade {self.course_name} {self.grade} {self.credits}学分>'
 
 
 class RegulationDoc(db.Model):

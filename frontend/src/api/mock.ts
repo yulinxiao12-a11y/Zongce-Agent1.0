@@ -31,8 +31,8 @@ function loadState() {
     opportunities: [
       {
         id: 1,
-        source_type: 'notice',
-        source_label: '近期通知',
+        source_type: 'activity',
+        source_label: '近期活动',
         title: '电信学院院办值班人员补招',
         category: '院务助理',
         dimension: 'moral',
@@ -59,8 +59,8 @@ function loadState() {
       },
       {
         id: 2,
-        source_type: 'notice',
-        source_label: '近期通知',
+        source_type: 'activity',
+        source_label: '近期活动',
         title: '白云校区学生处学生助理招新',
         category: '学生工作',
         dimension: 'moral',
@@ -87,8 +87,8 @@ function loadState() {
       },
       {
         id: 3,
-        source_type: 'notice',
-        source_label: '近期通知',
+        source_type: 'activity',
+        source_label: '近期活动',
         title: '粤风赓续·文脉兴湾诗歌节知识竞赛观众招募',
         category: '文化活动',
         dimension: 'arts_sports',
@@ -115,8 +115,8 @@ function loadState() {
       },
       {
         id: 4,
-        source_type: 'notice',
-        source_label: '近期通知',
+        source_type: 'activity',
+        source_label: '近期活动',
         title: '主持人请就位决赛观众报名',
         category: '文艺活动',
         dimension: 'arts_sports',
@@ -143,8 +143,8 @@ function loadState() {
       },
       {
         id: 5,
-        source_type: 'notice',
-        source_label: '近期通知',
+        source_type: 'activity',
+        source_label: '近期活动',
         title: '广州校区反诈小课堂咨询群',
         category: '安全教育',
         dimension: 'moral',
@@ -179,8 +179,8 @@ function loadState() {
         ['挑战杯系列竞赛', '创新创业', 'https://tiaozhanbei.net/', '通常按大挑/小挑周期', '包含学术科技作品和创业计划竞赛。', officialImages.challenge],
       ].map((row, index) => ({
         id: index + 6,
-        source_type: 'evergreen',
-        source_label: '常驻备赛',
+        source_type: 'competition',
+        source_label: '学科竞赛',
         title: row[0],
         category: row[1],
         dimension: 'academic',
@@ -199,7 +199,7 @@ function loadState() {
         group_qr_url: '',
         description: row[4],
         requirements: ['官方通知', '报名或参赛名单', '获奖或结果证明', '个人身份匹配证明'],
-        tags: ['常驻赛事', '电子信息'],
+        tags: ['学科竞赛', '电子信息'],
         attachments: [],
         images: [row[5]],
         roi_score: 4.8 - index * 0.1,
@@ -296,7 +296,7 @@ function hydrateOpportunity(item: any) {
   if (!item) {
     item = {
       id: 0,
-      source_type: 'evergreen',
+      source_type: 'competition',
       title: '待恢复的备赛项目',
       category: '综测项目',
       dimension: 'academic',
@@ -307,7 +307,7 @@ function hydrateOpportunity(item: any) {
   return {
     ...item,
     dimension_label: item.dimension === 'moral' ? '德育' : item.dimension === 'arts_sports' ? '文体' : '学业',
-    source_label: item.source_type === 'notice' ? '近期通知' : '常驻备赛',
+    source_label: item.source_type === 'activity' ? '近期活动' : '学科竞赛',
     in_basket: state.basket.some((basket: any) => basket.opportunity_id === item.id),
   }
 }
@@ -453,7 +453,7 @@ export async function mockApi<T>(path: string, options: RequestInit = {}): Promi
   }
   if (method === 'POST' && cleanPath === '/opportunities') {
     const body = bodyJson(options)
-    const item = { id: Date.now(), ...body, source_label: body.source_type === 'notice' ? '近期通知' : '常驻备赛', dimension_label: '学业', in_basket: false }
+    const item = { id: Date.now(), ...body, source_label: body.source_type === 'activity' ? '近期活动' : '学科竞赛', dimension_label: '学业', in_basket: false }
     state.opportunities.unshift(item)
     saveState()
     return item as T

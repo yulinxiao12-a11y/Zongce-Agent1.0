@@ -48,14 +48,29 @@ async function loadActivities() {
 function openAddActivity() {
     document.getElementById('actModalContent').innerHTML = `
         <h3>发布新活动</h3>
-        <div style="background:var(--primary-light);border-radius:8px;padding:10px;margin-bottom:12px;">
-            <div style="display:flex;gap:8px;"><input type="text" id="aiName" placeholder="输入活动名称，AI自动填充..." style="flex:1;padding:6px 10px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;"><button class="btn btn-sm btn-primary" onclick="aiFill()"><i class="fas fa-magic"></i> AI填充</button></div>
-            <div id="aiResult" style="font-size:11px;color:var(--primary);margin-top:4px;display:none;"></div>
+        <div style="background:var(--primary-light);border-radius:8px;padding:12px;margin-bottom:14px;">
+            <p style="font-size:12px;color:var(--text-muted);margin:0 0 8px;">上传通知截图/PDF/Word，AI 自动扫描并填充表单</p>
+            <div style="margin-bottom:8px;">
+                <div id="publishDropZone" style="border:2px dashed var(--border);border-radius:8px;padding:14px;text-align:center;cursor:pointer;background:#fff;transition:border-color .2s;"
+                    onclick="this.querySelector('input').click()"
+                    ondragover="event.preventDefault();this.style.borderColor='var(--primary)'"
+                    ondragleave="this.style.borderColor='var(--border)'"
+                    ondrop="handlePublishDrop(event)">
+                    <input type="file" multiple accept=".jpg,.jpeg,.png,.bmp,.webp,.pdf,.doc,.docx" style="display:none;" onchange="handlePublishFiles(this.files)">
+                    <strong style="font-size:13px;color:#475569;">📎 点击或拖拽文件到此处</strong><br>
+                    <span style="font-size:11px;color:#94a3b8;">支持 JPG、PNG、PDF、DOCX 格式</span>
+                </div>
+                <div id="publishFileList" style="margin-top:6px;display:none;flex-direction:column;gap:4px;"></div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <button class="btn btn-sm" style="background:var(--primary);color:#fff;border:0;border-radius:6px;padding:6px 14px;font-size:12px;cursor:pointer;" onclick="aiScanFiles()">🤖 AI 扫描文件并填充</button>
+                <span id="scanStatus" style="font-size:11px;color:var(--text-muted);"></span>
+            </div>
         </div>
         <div class="form-group"><label>活动标题</label><input type="text" id="actTitle" required></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
             <div class="form-group"><label>级别</label><select id="actLevel"><option>院级</option><option>校级</option><option>省级</option><option>国家级</option></select></div>
-            <div class="form-group"><label>分类</label><select id="actCat"><option>院级活动</option><option>学科竞赛</option><option>社会实践</option><option>文体活动</option><option>学术讲座</option></select></div>
+            <div class="form-group"><label>分类</label><select id="actCat"><option>院级活动</option><option>社会实践</option><option>志愿服务</option><option>文体活动</option><option>学术讲座</option><option>其他</option></select></div>
             <div class="form-group"><label>日期</label><input type="date" id="actDate"></div>
             <div class="form-group"><label>状态</label><select id="actStatus"><option>即将开始</option><option>报名中</option><option>进行中</option><option>已结束</option></select></div>
         </div>
@@ -64,6 +79,8 @@ function openAddActivity() {
         <div class="form-group"><label>关联综测加分</label><input type="text" id="actScore" placeholder="如：品德+1-3分"></div>
         <div class="modal-actions"><button class="btn btn-outline btn-sm" onclick="closeModal()">取消</button><button class="btn btn-primary btn-sm" onclick="saveActivity()"><i class="fas fa-save"></i> 发布</button></div>`;
     document.getElementById('actModal').style.display = 'flex';
+    window._publishFiles = [];
+    window._publishFileIds = [];
 }
 
 function editActivity(actId) {
@@ -75,7 +92,7 @@ function editActivity(actId) {
             <div class="form-group"><label>活动标题</label><input type="text" id="actTitle" value="${escHtml(a.title)}" required></div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                 <div class="form-group"><label>级别</label><select id="actLevel">${['院级','校级','省级','国家级'].map(l=>`<option ${a.level===l?'selected':''}>${l}</option>`).join('')}</select></div>
-                <div class="form-group"><label>分类</label><select id="actCat">${['院级活动','学科竞赛','社会实践','文体活动','学术讲座'].map(c=>`<option ${a.category===c?'selected':''}>${c}</option>`).join('')}</select></div>
+                <div class="form-group"><label>分类</label><select id="actCat">${['院级活动','社会实践','志愿服务','文体活动','学术讲座','其他'].map(c=>`<option ${a.category===c?'selected':''}>${c}</option>`).join('')}</select></div>
                 <div class="form-group"><label>日期</label><input type="date" id="actDate" value="${a.date}"></div>
                 <div class="form-group"><label>状态</label><select id="actStatus">${['即将开始','报名中','进行中','已结束'].map(s=>`<option ${a.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
             </div>
@@ -87,19 +104,101 @@ function editActivity(actId) {
     });
 }
 
-async function aiFill() {
-    const name = document.getElementById('aiName').value.trim();
-    if (!name) return;
-    const res = document.getElementById('aiResult'); res.style.display = 'block'; res.textContent = 'AI分析中...';
+function handlePublishFiles(files) {
+    files = Array.from(files).filter(f => {
+        const ext = f.name.split('.').pop().toLowerCase();
+        return ['jpg','jpeg','png','bmp','webp','gif','pdf','doc','docx'].includes(ext);
+    });
+    if (!files.length) return;
+    const existing = window._publishFiles || [];
+    const added = files.filter(f => !existing.some(e => e.name===f.name && e.size===f.size));
+    window._publishFiles = [...existing, ...added];
+    renderPublishFiles();
+}
+
+function handlePublishDrop(e) {
+    e.preventDefault();
+    e.target.style.borderColor = 'var(--border)';
+    if (e.dataTransfer && e.dataTransfer.files) handlePublishFiles(e.dataTransfer.files);
+}
+
+function removePublishFile(idx) {
+    window._publishFiles.splice(idx, 1);
+    renderPublishFiles();
+}
+
+function renderPublishFiles() {
+    const el = document.getElementById('publishFileList');
+    const files = window._publishFiles || [];
+    if (!el) return;
+    if (!files.length) { el.style.display = 'none'; return; }
+    el.style.display = 'flex';
+    el.innerHTML = files.map((f, i) => {
+        const ext = f.name.split('.').pop().toUpperCase();
+        const kb = (f.size/1024).toFixed(1);
+        return '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#f1f5f9;border-radius:6px;font-size:12px;">'
+            + '<b style="font-size:10px;background:var(--primary);color:#fff;padding:2px 5px;border-radius:3px;">'+ext+'</b>'
+            + '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+escHtml(f.name)+'</span>'
+            + '<small style="color:var(--text-muted);">'+kb+' KB</small>'
+            + '<button onclick="removePublishFile('+i+')" style="border:0;background:none;color:var(--danger);cursor:pointer;font-size:14px;padding:0 4px;">x</button>'
+            + '</div>';
+    }).join('');
+}
+
+async function aiScanFiles() {
+    const files = window._publishFiles || [];
+    if (!files.length) { showToast('请先选择需要扫描的文件'); return; }
+    const status = document.getElementById('scanStatus');
+    status.textContent = '⏳ 上传中...';
     try {
-        const resp = await fetch('/api/admin/activities/ai-fill', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
-        const data = await resp.json();
-        if (data.category) document.getElementById('actCat').value = data.category === 'academic' ? '学科竞赛' : data.category === 'moral' ? '社会实践' : '文体活动';
-        if (data.level) document.getElementById('actLevel').value = data.level;
-        if (data.section) document.getElementById('actOrganizer').value = data.section;
-        if (data.suggested_score) document.getElementById('actScore').value = '学业+' + data.suggested_score + '分';
-        res.innerHTML = '<i class="fas fa-check-circle" style="color:var(--success);"></i> AI已填充: ' + (data.reason||'基于规则匹配');
-    } catch(e) { res.textContent = 'AI填充失败'; }
+        const form = new FormData();
+        files.forEach(f => form.append('files', f));
+        const upResp = await fetch('/api/upload', { method: 'POST', body: form });
+        const upData = await upResp.json();
+        const fileIds = (upData.files || []).map(f => f.id).filter(Boolean);
+        if (!fileIds.length) { status.textContent = '上传失败'; return; }
+        window._publishFileIds = fileIds;
+
+        status.textContent = '🔍 AI正在扫描识别文字...';
+        const analyzeResp = await fetch('/api/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uploaded_file_ids: fileIds, keyword: '' })
+        });
+        const analyzeData = await analyzeResp.json();
+        const results = analyzeData.results || [];
+        const allText = results.map(r => r.extracted_text_full || r.extracted_text || '').filter(Boolean).join('\n\n');
+
+        if (!allText.trim()) { status.textContent = '未能提取到文字，请尝试直接输入'; return; }
+
+        // Fill form from extracted text
+        const lines = allText.split(/[\n\r]+/).filter(l => l.trim());
+        const titleGuess = lines.find(l => l.length > 6 && l.length < 100) || files[0].name.replace(/\.[^.]+$/, '');
+        if (titleGuess) document.getElementById('actTitle').value = titleGuess.slice(0, 200);
+        document.getElementById('actDesc').value = allText.slice(0, 2000);
+
+        // Try AI suggestion from extracted text
+        try {
+            const aiResp = await fetch('/api/admin/activities/ai-fill', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: titleGuess.slice(0, 60), description: allText.slice(0, 2000) })
+            });
+            const aiData = await aiResp.json();
+            if (aiData.category) document.getElementById('actCat').value = aiData.category==='academic'?'学术讲座':aiData.category==='moral'?'社会实践':'文体活动';
+            if (aiData.level) document.getElementById('actLevel').value = aiData.level;
+            if (aiData.section) document.getElementById('actOrganizer').value = aiData.section;
+            if (aiData.suggested_score) document.getElementById('actScore').value = '学业+'+aiData.suggested_score+'分';
+        } catch {}
+
+        // Date detection
+        const dm = allText.match(/(20\d{2}[年\-\/\.]\d{1,2}[月\-\/\.]\d{1,2}[日号])/);
+        if (dm) document.getElementById('actDate').value = dm[1].replace(/[年月]/g,'-').replace(/[日号]/g,'');
+
+        status.textContent = '✅ 已扫描 '+results.length+' 个文件并填充，请核对';
+        window._publishFiles = [];
+        renderPublishFiles();
+    } catch(e) { status.textContent = '扫描失败：'+e.message; }
 }
 
 async function saveActivity() {

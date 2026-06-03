@@ -19,7 +19,7 @@ from flask_login import (LoginManager, login_user, logout_user, login_required,
                          current_user, UserMixin)
 
 from catalog import CATALOG, CAT_INFO, SUBCAT_NAMES, get_required_proofs
-from models import db, User, CatalogItem, UserItem, Submission, UploadedFile, RegulationDoc
+from models import db, User, CatalogItem, UserItem, Submission, UploadedFile, RegulationDoc, CourseGrade
 from ai_engine import analyze_files, ai_suggest_item_fields
 from competitions_data import COMPETITIONS
 from activities_data import load_activities, add_activity, update_activity, delete_activity
@@ -130,6 +130,54 @@ def init_db_command():
         db.session.commit()
         print(f'Database initialized with {len(CATALOG)} catalog items.')
         print('Default admin: student_id=admin, password=000000')
+
+
+@app.cli.command('migrate-academic-year')
+def migrate_academic_year():
+    """迁移：新增 CourseGrade 表 + UserItem/Submission 加 academic_year 字段"""
+    with app.app_context():
+        # CourseGrade 表通过 create_all 创建
+        db.create_all()
+
+        # SQLite ALTER TABLE — 检测并新增列
+        def _add_column_if_missing(table, col_name, col_def):
+            try:
+                db.session.execute(db.text(f'ALTER TABLE {table} ADD COLUMN {col_name} {col_def}'))
+                db.session.commit()
+                print(f'  + Added {col_name} to {table}')
+            except Exception as e:
+                db.session.rollback()
+                if 'duplicate column' in str(e).lower() or 'already exists' in str(e).lower():
+                    print(f'  - {col_name} already exists in {table}, skipping')
+                else:
+                    print(f'  ! Failed to add {col_name} to {table}: {e}')
+
+        _add_column_if_missing('user_items', 'academic_year', "VARCHAR(16) DEFAULT '2025-2026'")
+        _add_column_if_missing('submissions', 'academic_year', "VARCHAR(16) DEFAULT '2025-2026'")
+
+        # Set default for existing rows
+        for table in ['user_items', 'submissions']:
+            try:
+                db.session.execute(db.text(
+                    f"UPDATE {table} SET academic_year = '2025-2026' WHERE academic_year IS NULL"
+                ))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+
+        # Create index
+        for table in ['user_items', 'submissions']:
+            try:
+                db.session.execute(db.text(
+                    f"CREATE INDEX IF NOT EXISTS idx_{table}_academic_year ON {table} (academic_year)"
+                ))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+
+        print('Academic year migration complete.')
+        print('CourseGrade table created.')
+        print('Existing data defaulted to academic_year=2025-2026.')
 
 
 # ============================================================
@@ -401,8 +449,8 @@ def _activity_to_opportunity(activity):
     activity_id = activity.get('id') or ''
     return {
         'id': activity_id,
-        'source_type': 'notice',
-        'source_label': '近期通知',
+        'source_type': 'activity',
+        'source_label': '近期活动',
         'title': activity.get('title', ''),
         'category': activity.get('category', ''),
         'dimension': dimension,
@@ -428,6 +476,45 @@ def _activity_to_opportunity(activity):
         'in_basket': False,
         'status': activity.get('status', ''),
         'activity_id': activity_id,
+    }
+
+
+def _competition_to_opportunity(comp):
+    """将学科竞赛分类表中的竞赛转换为 Opportunity 对象"""
+    level = comp.get('mapped_level', comp.get('level', ''))
+    comp_id = comp.get('id', '')
+    website = comp.get('website', '').strip()
+    # 使用本地生成的封面图（640x360 > 480p）
+    cover_path = f'/competition-covers/{comp_id}.png'
+    return {
+        'id': comp_id,
+        'source_type': 'competition',
+        'source_label': '学科竞赛',
+        'title': comp.get('name', ''),
+        'category': level,
+        'dimension': 'academic',
+        'dimension_label': '学业',
+        'organizer': comp.get('organizer', ''),
+        'location': '',
+        'start_time': '',
+        'deadline': '',
+        'season_months': '',
+        'credit_hint': '学业表现：按竞赛级别和获奖证书审核加分',
+        'rule_ref': f'{level}学科竞赛，按综测细则竞赛目录核验',
+        'official_url': website,
+        'registration_url': '',
+        'contact_email': '',
+        'article_url': '',
+        'group_qr_url': '',
+        'description': f'{comp.get("organizer", "")}主办的{level}学科竞赛' if comp.get('organizer') else f'{level}学科竞赛',
+        'requirements': ['赛事通知', '报名或参赛证明', '过程材料', '获奖证书或结项证明'],
+        'tags': [level, '学科竞赛'],
+        'attachments': [],
+        'images': [cover_path],
+        'roi_score': 4.5 if '国家级' in str(level) else 3.5,
+        'in_basket': False,
+        'status': '常驻赛事',
+        'activity_id': comp_id,
     }
 
 
@@ -462,6 +549,16 @@ def _dimension_meta():
     }
 
 
+def _default_academic_year():
+    """根据当前月份推断学年。9月-12月→当年-次年，1月-8月→去年-当年"""
+    from datetime import date
+    now = date.today()
+    if now.month >= 9:
+        return f'{now.year}-{now.year + 1}'
+    else:
+        return f'{now.year - 1}-{now.year}'
+
+
 def _student_context_user():
     requested_id = request.args.get('user_id', type=int)
     if current_user.role != 'admin':
@@ -480,7 +577,7 @@ def _student_context_user():
 def _all_opportunities_for_user(user):
     return (
         [_activity_to_opportunity(item) for item in load_activities()]
-        + _recommended_evergreen_opportunities(user)
+        + [_competition_to_opportunity(c) for c in COMPETITIONS]
     )
 
 
@@ -629,7 +726,7 @@ EVERGREEN_COMPETITIONS = [
         'title': '挑战杯系列竞赛',
         'category': '创新创业',
         'organizer': '共青团中央等',
-        'season_months': '按大挑/小挑战周期',
+        'season_months': '大挑（学术科研·奇数年）/ 小挑（创业计划·偶数年）',
         'description': '覆盖学术科技作品和创业计划，适合把课程项目、科研训练或社会实践沉淀为可参赛成果。',
         'credit_hint': '学业表现或德育表现：按项目属性、证明材料和获奖等级审核。',
         'rule_ref': '综测加分以学院通知、竞赛目录和最终获奖证明为准。',
@@ -715,7 +812,7 @@ def _recommended_evergreen_opportunities(user):
 @app.route('/api/opportunities', methods=['GET', 'POST'])
 @login_required
 def api_opportunities_compat():
-    """Vue 学生端机会大厅兼容接口，近期通知与管理端活动共用一份数据。"""
+    """Vue 学生端机会大厅兼容接口：近期活动=管理员发布的活动，学科竞赛=竞赛分类表。"""
     if request.method == 'GET':
         source_type = request.args.get('source_type', '')
         category = request.args.get('category', '')
@@ -724,7 +821,7 @@ def api_opportunities_compat():
 
         opportunities = (
             [_activity_to_opportunity(item) for item in load_activities()]
-            + _recommended_evergreen_opportunities(current_user)
+            + [_competition_to_opportunity(c) for c in COMPETITIONS]
         )
         if source_type:
             opportunities = [item for item in opportunities if item['source_type'] == source_type]
@@ -764,13 +861,14 @@ def api_opportunities_compat():
 @login_required
 def api_dashboard_summary():
     user = _student_context_user()
+    academic_year = request.args.get('academic_year', _default_academic_year())
     meta = _dimension_meta()
     totals = {key: 0.0 for key in meta}
     ledgers = []
 
-    user_items = UserItem.query.filter_by(user_id=user.id).order_by(
-        UserItem.created_at.desc()
-    ).all()
+    user_items = UserItem.query.filter_by(
+        user_id=user.id, academic_year=academic_year
+    ).order_by(UserItem.created_at.desc()).all()
     for item in user_items:
         catalog_item = item.catalog_item
         dimension = _frontend_dimension(catalog_item.category if catalog_item else '')
@@ -782,18 +880,109 @@ def api_dashboard_summary():
             'rule_ref': (catalog_item.section if catalog_item else item.source) or '',
         })
 
+    # ── 学业基础分 + 绩点加分：优先使用 CourseGrade 计算 ──
+    gpa_info = {
+        'score': user.gpa_score,
+        'bonus': 0,
+        'tier': '',
+        'weighted_average': None,
+        'academic_base': None,
+        'from_courses': False,
+    }
+    courses = CourseGrade.query.filter_by(
+        user_id=user.id, academic_year=academic_year
+    ).all()
+
+    if courses:
+        total_weighted = sum(c.grade * c.credits for c in courses)
+        total_credits = sum(c.credits for c in courses)
+        weighted_avg = round(total_weighted / total_credits, 2) if total_credits > 0 else 0
+        academic_base = round(min(80.0, weighted_avg * 0.8), 2)
+
+        # GPA bonus: only check 必修+限选
+        required = [c for c in courses if c.course_type in ('必修', '限选')]
+        req_total_weighted = sum(c.grade * c.credits for c in required)
+        req_total_credits = sum(c.credits for c in required)
+        req_avg = round(req_total_weighted / req_total_credits, 2) if req_total_credits > 0 else 0
+
+        bonus = 0
+        tier = ''
+        if req_avg >= 85 and all(c.grade >= 75 for c in required):
+            bonus, tier = 5, '均分≥85且单科≥75'
+        elif req_avg >= 80 and all(c.grade >= 70 for c in required):
+            bonus, tier = 3, '均分≥80且单科≥70'
+        elif req_avg >= 75 and all(c.grade >= 70 for c in required):
+            bonus, tier = 2, '均分≥75且单科≥70'
+
+        gpa_info = {
+            'score': req_avg,
+            'bonus': bonus,
+            'tier': tier,
+            'weighted_average': weighted_avg,
+            'academic_base': academic_base,
+            'from_courses': True,
+            'course_count': len(courses),
+        }
+
+        # Replace academic base: use course-based computation
+        # totals['academic'] tracks ONLY extra items (catalog + GPA bonus)
+        # academic_base replaces the fixed base=80 in the details loop
+        # Do NOT add academic_base to totals — it's the base, not an extra
+
+        if bonus > 0:
+            totals['academic'] += bonus
+            ledgers.append({
+                'title': f'必修限选加权均分{req_avg}（{tier}）',
+                'dimension': 'academic',
+                'score': bonus,
+                'rule_ref': '学业成绩加分',
+            })
+        ledgers.append({
+            'title': f'学业基本分（加权均分{weighted_avg}×0.8）',
+            'dimension': 'academic',
+            'score': academic_base,
+            'rule_ref': '学业基础分',
+            'kind': 'base',  # 标记为基础分，前端分布图排除
+        })
+    elif user.gpa_score is not None and user.gpa_score > 0:
+        # Fallback: old single-value GPA
+        avg = user.gpa_score
+        if avg >= 85:
+            gpa_info['bonus'] = 5
+            gpa_info['tier'] = '均分≥85且单科≥75'
+        elif avg >= 80:
+            gpa_info['bonus'] = 3
+            gpa_info['tier'] = '均分≥80且单科≥70'
+        elif avg >= 75:
+            gpa_info['bonus'] = 2
+            gpa_info['tier'] = '均分≥75且单科≥70'
+        if gpa_info['bonus'] > 0:
+            totals['academic'] += gpa_info['bonus']
+            ledgers.append({
+                'title': f'必修课/限选课均分{avg:.1f}（{gpa_info["tier"]}）',
+                'dimension': 'academic',
+                'score': gpa_info['bonus'],
+                'rule_ref': '学业成绩加分',
+            })
+
     details = []
     weighted_total = 0.0
     for key, info in meta.items():
         raw_add = totals[key]
         normalized_add = min(raw_add, float(info['cap']))
-        score = min(100.0, float(info['base']) + normalized_add)
+        deduction = 0.0
+        # 学业：使用课程数据计算的基本分替代固定80分
+        if key == 'academic' and gpa_info.get('from_courses') and gpa_info.get('academic_base') is not None:
+            effective_base = gpa_info['academic_base']
+        else:
+            effective_base = float(info['base'])
+        score = max(0.0, min(100.0, effective_base + normalized_add - deduction))
         weighted = score * float(info['weight'])
         weighted_total += weighted
         details.append({
             'key': key,
             'label': info['label'],
-            'base': info['base'],
+            'base': round(effective_base, 2),
             'raw_add': round(raw_add, 2),
             'normalized_add': round(normalized_add, 2),
             'deduction': 0,
@@ -806,6 +995,7 @@ def api_dashboard_summary():
     pending_statuses = ['pending', 'pending_ai', 'pending_human', 'needs_more']
     pending = Submission.query.filter(
         Submission.user_id == user.id,
+        Submission.academic_year == academic_year,
         Submission.status.in_(pending_statuses),
     ).order_by(Submission.created_at.desc()).all()
     pending_score = 0.0
@@ -826,6 +1016,16 @@ def api_dashboard_summary():
             'rule_version': '2025-07-electronic-info',
             'total': total,
             'details': details,
+        },
+        'academic_year': academic_year,
+        'gpa_info': gpa_info,
+        'scoring_rules': {
+            'formula': '品德行为表现×20% + 学业表现×65% + 文体表现×15%',
+            'dimensions': [
+                {'key': k, 'label': v['label'], 'base': v['base'], 'cap': v['cap'], 'weight': v['weight']}
+                for k, v in meta.items()
+            ],
+            'note': '学业基本分=加权均分×0.8(满分80)；GPA加分需同时满足必修限选均分和单科最低分条件。',
         },
         'pending_score': round(pending_score, 2),
         'goal_gap': max(0, round(90 - total, 2)),
@@ -1185,6 +1385,239 @@ def api_admin_regulation_current():
 
 
 # ============================================================
+# API: Academic Years
+# ============================================================
+
+@app.route('/api/academic-years')
+@login_required
+def api_academic_years():
+    """返回用户所有有数据的学年 + 系统默认的学年列表"""
+    user = _student_context_user()
+    years_set = set()
+
+    # 从 course_grades 收集学年
+    from models import CourseGrade
+    cg_years = db.session.query(CourseGrade.academic_year).filter(
+        CourseGrade.user_id == user.id
+    ).distinct().all()
+    for (y,) in cg_years:
+        if y:
+            years_set.add(y)
+
+    # 从 user_items 收集学年
+    ui_years = db.session.query(UserItem.academic_year).filter(
+        UserItem.user_id == user.id
+    ).distinct().all()
+    for (y,) in ui_years:
+        if y:
+            years_set.add(y)
+
+    # 从 submissions 收集学年
+    sub_years = db.session.query(Submission.academic_year).filter(
+        Submission.user_id == user.id
+    ).distinct().all()
+    for (y,) in sub_years:
+        if y:
+            years_set.add(y)
+
+    # 生成默认学年列表（当前+前3年）
+    current = _default_academic_year()
+    cy = int(current.split('-')[0])
+    default_years = [f'{cy - i}-{cy - i + 1}' for i in range(4)]
+    all_years = sorted(set(default_years) | years_set, reverse=True)
+
+    return jsonify({
+        'years': all_years,
+        'current': current,
+    })
+
+
+# ============================================================
+# API: Course Grades (学业成绩)
+# ============================================================
+
+@app.route('/api/course-grades', methods=['GET', 'POST'])
+@login_required
+def api_course_grades():
+    from models import CourseGrade
+    user = _student_context_user()
+    academic_year = request.args.get('academic_year', _default_academic_year()) \
+        if request.method == 'GET' else None
+
+    if request.method == 'GET':
+        courses = CourseGrade.query.filter_by(
+            user_id=user.id, academic_year=academic_year
+        ).order_by(CourseGrade.course_type.asc(), CourseGrade.course_name.asc()).all()
+
+        course_list = [{
+            'id': c.id,
+            'course_name': c.course_name,
+            'grade': c.grade,
+            'credits': c.credits,
+            'course_type': c.course_type,
+            'ocr_source': c.ocr_source,
+        } for c in courses]
+
+        # 计算
+        comp = _compute_course_summary(courses)
+
+        return jsonify({
+            'academic_year': academic_year,
+            'courses': course_list,
+            'course_count': len(courses),
+            **comp,
+        })
+
+    # POST: Replace all courses for a given academic_year
+    data = request.get_json()
+    academic_year = data.get('academic_year', _default_academic_year())
+    course_list = data.get('courses', [])
+
+    if not course_list:
+        return jsonify({'error': '课程列表不能为空'}), 400
+
+    # Validate courses
+    valid_types = ('必修', '限选', '任选', '公选')
+    for i, c in enumerate(course_list):
+        if not c.get('course_name', '').strip():
+            return jsonify({'error': f'第{i+1}门课程名称为空'}), 400
+        grade = c.get('grade')
+        credits = c.get('credits')
+        if grade is None or not (0 <= float(grade) <= 100):
+            return jsonify({'error': f'课程"{c.get("course_name")}"成绩必须在0-100之间'}), 400
+        if credits is None or not (0 < float(credits) <= 15):
+            return jsonify({'error': f'课程"{c.get("course_name")}"学分必须在0.5-15之间'}), 400
+        if c.get('course_type', '必修') not in valid_types:
+            return jsonify({'error': f'课程"{c.get("course_name")}"类型无效'}), 400
+
+    # Delete existing courses for this user+year
+    CourseGrade.query.filter_by(
+        user_id=user.id, academic_year=academic_year
+    ).delete()
+
+    # Insert new courses
+    for c in course_list:
+        course = CourseGrade(
+            user_id=user.id,
+            academic_year=academic_year,
+            course_name=c['course_name'].strip(),
+            grade=float(c['grade']),
+            credits=float(c['credits']),
+            course_type=c.get('course_type', '必修'),
+            ocr_source=c.get('ocr_source', False),
+        )
+        db.session.add(course)
+    db.session.commit()
+
+    # Return computation
+    courses = CourseGrade.query.filter_by(
+        user_id=user.id, academic_year=academic_year
+    ).all()
+    comp = _compute_course_summary(courses)
+
+    return jsonify({
+        'success': True,
+        'academic_year': academic_year,
+        'course_count': len(courses),
+        **comp,
+    })
+
+
+@app.route('/api/course-grades/ocr', methods=['POST'])
+@login_required
+def api_course_grades_ocr():
+    """OCR识别成绩单：接受已上传的 file_ids，返回识别出的课程列表（不保存）"""
+    from models import CourseGrade
+    from ai_engine import extract_text_from_file, extract_courses_from_ocr_text
+
+    data = request.get_json()
+    file_ids = data.get('uploaded_file_ids', [])
+    if not file_ids:
+        return jsonify({'error': '请先上传文件'}), 400
+
+    files = UploadedFile.query.filter(
+        UploadedFile.id.in_(file_ids),
+        UploadedFile.user_id == current_user.id,
+    ).all()
+
+    if not files:
+        return jsonify({'error': '文件不存在'}), 404
+
+    results = []
+    for f in files:
+        try:
+            # 使用已有的 OCR 函数提取文字
+            ocr_text = extract_text_from_file(f.file_path, f.file_type)
+            # 从 OCR 文字中提取课程
+            courses = extract_courses_from_ocr_text(ocr_text or '')
+
+            results.append({
+                'file_id': f.id,
+                'file_name': f.original_filename,
+                'extracted_text_preview': (ocr_text or '')[:500],
+                'courses': courses,
+            })
+        except Exception as e:
+            results.append({
+                'file_id': f.id,
+                'file_name': f.original_filename,
+                'error': str(e),
+                'courses': [],
+            })
+
+    return jsonify({'results': results})
+
+
+def _compute_course_summary(courses):
+    """根据课程列表计算加权均分、学业基本分、GPA加分"""
+    if not courses:
+        return {
+            'weighted_average': None,
+            'academic_base_score': None,
+            'gpa_bonus': 0,
+            'gpa_tier': '',
+            'required_courses_avg': None,
+            'required_min_grade': None,
+            'all_required_pass': False,
+        }
+
+    total_weighted = sum(c.grade * c.credits for c in courses)
+    total_credits = sum(c.credits for c in courses)
+    weighted_avg = round(total_weighted / total_credits, 2) if total_credits > 0 else 0
+    academic_base = round(min(80.0, weighted_avg * 0.8), 2)
+
+    required = [c for c in courses if c.course_type in ('必修', '限选')]
+    if required:
+        req_weighted = sum(c.grade * c.credits for c in required)
+        req_credits = sum(c.credits for c in required)
+        req_avg = round(req_weighted / req_credits, 2) if req_credits > 0 else 0
+        req_min = round(min(c.grade for c in required), 1)
+    else:
+        req_avg = None
+        req_min = None
+
+    bonus = 0
+    tier = ''
+    if required:
+        if req_avg >= 85 and all(c.grade >= 75 for c in required):
+            bonus, tier = 5, '均分≥85且单科≥75'
+        elif req_avg >= 80 and all(c.grade >= 70 for c in required):
+            bonus, tier = 3, '均分≥80且单科≥70'
+        elif req_avg >= 75 and all(c.grade >= 70 for c in required):
+            bonus, tier = 2, '均分≥75且单科≥70'
+
+    return {
+        'weighted_average': weighted_avg,
+        'academic_base_score': academic_base,
+        'gpa_bonus': bonus,
+        'gpa_tier': tier,
+        'required_courses_avg': req_avg,
+        'required_min_grade': req_min,
+        'all_required_pass': required and all(c.grade >= 70 for c in required) if required else False,
+    }
+
+
+# ============================================================
 # API: Catalog
 # ============================================================
 
@@ -1288,7 +1721,10 @@ def api_catalog_item_proofs(item_id):
 @login_required
 def api_user_items():
     if request.method == 'GET':
-        items = UserItem.query.filter_by(user_id=current_user.id).order_by(
+        academic_year = request.args.get('academic_year', _default_academic_year())
+        items = UserItem.query.filter_by(
+            user_id=current_user.id, academic_year=academic_year
+        ).order_by(
             UserItem.created_at.desc()
         ).all()
         result = []
@@ -1342,6 +1778,7 @@ def api_user_items():
             catalog_item_id=catalog_id,
             score=ci.score,
             completion_date=completion_date,
+            academic_year=data.get('academic_year', _default_academic_year()),
             source=data.get('source', 'manual'),
         )
         db.session.add(ui)
@@ -1684,7 +2121,10 @@ def api_analyze():
 @login_required
 def api_submissions():
     if request.method == 'GET':
-        subs = Submission.query.filter_by(user_id=current_user.id).order_by(
+        academic_year = request.args.get('academic_year', _default_academic_year())
+        subs = Submission.query.filter_by(
+            user_id=current_user.id, academic_year=academic_year
+        ).order_by(
             Submission.created_at.desc()
         ).all()
         result = []
@@ -1707,6 +2147,7 @@ def api_submissions():
                 'description': s.description,
                 'proof_filename': s.proof_filename,
                 'completion_date': s.completion_date.strftime('%Y-%m-%d') if s.completion_date else '',
+                'academic_year': s.academic_year,
                 'status': s.status,
                 'ai_confidence': round(s.ai_confidence, 1),
                 'ai_decision': s.ai_decision,
@@ -1725,6 +2166,7 @@ def api_submissions():
         if not uploaded_file_ids and data.get('uploaded_file_id'):
             uploaded_file_ids = [data['uploaded_file_id']]
         completion_date_str = data.get('completion_date', '')
+        academic_year = data.get('academic_year', _default_academic_year())
         ai_confidence = data.get('ai_confidence', 0)
         ai_decision = data.get('ai_decision', 'medium')
         ai_reason = data.get('ai_reason', '')
@@ -1826,6 +2268,7 @@ def api_submissions():
             proof_filename=', '.join(proof_filenames[:3]),
             proof_filepath=proof_filepath,
             completion_date=completion_date,
+            academic_year=academic_year,
             status=status,
             ai_confidence=ai_confidence,
             ai_decision=ai_decision,
@@ -2587,6 +3030,9 @@ def api_update_profile():
         current_user.department = data['department']
     if data.get('class_name') is not None:
         current_user.class_name = data['class_name']
+    if 'gpa_score' in data:
+        val = data['gpa_score']
+        current_user.gpa_score = float(val) if val else None
     db.session.commit()
     return jsonify({'success': True})
 
