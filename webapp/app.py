@@ -473,7 +473,7 @@ def _activity_to_opportunity(activity):
         'deadline': activity.get('date', ''),
         'season_months': '',
         'credit_hint': activity.get('related_score', ''),
-        'rule_ref': activity.get('related_score', ''),
+        'rule_ref': f'综测细则：{activity.get("category", "")}类，{activity.get("level", "")}级别，加分以最终审核为准',
         'official_url': activity.get('official_url', ''),
         'registration_url': activity.get('registration_url', ''),
         'contact_email': '',
@@ -1381,7 +1381,17 @@ def api_admin_regulation_apply(doc_id):
 @app.route('/api/admin/regulations/<int:doc_id>/file')
 @admin_required
 def api_admin_regulation_file(doc_id):
-    """查看/下载细则文件"""
+    """查看/下载细则文件（管理端）"""
+    doc = RegulationDoc.query.get_or_404(doc_id)
+    directory = os.path.join(app.config['UPLOAD_FOLDER'], 'regulations')
+    return send_from_directory(directory, doc.stored_filename,
+                               download_name=doc.original_filename)
+
+
+@app.route('/api/regulations/<int:doc_id>/file')
+@login_required
+def api_regulation_file(doc_id):
+    """查看/下载细则文件（学生端可用）"""
     doc = RegulationDoc.query.get_or_404(doc_id)
     directory = os.path.join(app.config['UPLOAD_FOLDER'], 'regulations')
     return send_from_directory(directory, doc.stored_filename,
@@ -1806,8 +1816,9 @@ def api_user_items():
         return jsonify({'success': True, 'id': ui.id})
 
     elif request.method == 'DELETE':
-        # Clear all user items
-        UserItem.query.filter_by(user_id=current_user.id).delete()
+        # Clear user items for a specific academic year (default: current)
+        academic_year = request.args.get('academic_year', _default_academic_year())
+        UserItem.query.filter_by(user_id=current_user.id, academic_year=academic_year).delete()
         db.session.commit()
         return jsonify({'success': True})
 
@@ -1830,7 +1841,9 @@ def api_delete_user_item(item_id):
 @app.route('/api/calculate', methods=['POST'])
 @login_required
 def api_calculate():
-    user_items = UserItem.query.filter_by(user_id=current_user.id).all()
+    data = request.get_json() or {}
+    academic_year = data.get('academic_year', _default_academic_year())
+    user_items = UserItem.query.filter_by(user_id=current_user.id, academic_year=academic_year).all()
 
     moral_extra_raw = 0
     academic_extra_raw = 0
@@ -2146,12 +2159,11 @@ def api_analyze():
 @login_required
 def api_submissions():
     if request.method == 'GET':
-        academic_year = request.args.get('academic_year', _default_academic_year())
-        subs = Submission.query.filter_by(
-            user_id=current_user.id, academic_year=academic_year
-        ).order_by(
-            Submission.created_at.desc()
-        ).all()
+        academic_year = request.args.get('academic_year', '')
+        q = Submission.query.filter_by(user_id=current_user.id)
+        if academic_year:
+            q = q.filter_by(academic_year=academic_year)
+        subs = q.order_by(Submission.created_at.desc()).all()
         result = []
         for s in subs:
             # Get linked files
@@ -2351,10 +2363,13 @@ def api_submission_files(sub_id):
 def api_admin_submissions():
     status_filter = request.args.get('status', '')
     queue_filter = request.args.get('queue', '')
+    academic_year = request.args.get('academic_year', '')
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 20, type=int)
 
     query = Submission.query
+    if academic_year:
+        query = query.filter(Submission.academic_year == academic_year)
     if queue_filter == 'high_confidence':
         query = query.filter(Submission.status.in_(['pending', 'needs_more']), Submission.ai_confidence >= 90)
     elif queue_filter in ('pending', 'pending_human'):
@@ -2423,6 +2438,7 @@ def api_admin_submissions():
             'student_id': student.student_id if student else '',
             'student_name': student.name if student else '',
             'catalog_item_id': s.catalog_item_id,
+            'academic_year': s.academic_year,
             'title': s.title,
             'description': s.description,
             'proof_filename': s.proof_filename,
@@ -2521,8 +2537,10 @@ def api_review_submission(sub_id):
                 completion_date=sub.completion_date,
                 source='upload',
                 submission_id=sub.id,
+                academic_year=sub.academic_year,
             )
             db.session.add(ui)
+            db.session.commit()  # 立即提交，不等待 AuditLog，防止审计日志异常回滚丢失审核结果
 
     elif action == 'reject':
         sub.status = 'rejected'
@@ -2640,6 +2658,7 @@ def api_batch_approve():
                     completion_date=sub.completion_date,
                     source='upload',
                     submission_id=sub.id,
+                    academic_year=sub.academic_year,
                 )
                 db.session.add(ui)
             # ── 审计日志：批量STP ──
@@ -2717,6 +2736,7 @@ def _submission_to_certification(s, admin_view=False):
         'id': s.id,
         'user_id': s.user_id,
         'catalog_item_id': s.catalog_item_id,
+        'academic_year': s.academic_year or '',
         'title': s.title,
         'dimension': _frontend_dimension(ci.category if ci else 'academic'),
         'award_level': ci.level if ci else '',
@@ -2775,7 +2795,7 @@ def api_material_templates():
             'id': current_doc.id,
             'name': current_doc.title,
             'version': current_doc.title,
-            'file_url': f'/api/admin/regulations/{current_doc.id}/file',
+            'file_url': f'/api/regulations/{current_doc.id}/file',
             'notes': '',
             'is_active': 1,
             'uploaded_at': current_doc.uploaded_at.strftime('%Y-%m-%d %H:%M'),
@@ -2800,7 +2820,7 @@ def api_rule_documents():
         'id': doc.id,
         'name': doc.title,
         'version': doc.title,
-        'file_url': f'/api/admin/regulations/{doc.id}/file',
+        'file_url': f'/api/regulations/{doc.id}/file',
         'notes': '',
         'is_active': 1 if doc.is_current else 0,
         'uploaded_at': doc.uploaded_at.strftime('%Y-%m-%d %H:%M'),
@@ -2811,9 +2831,11 @@ def api_rule_documents():
 @login_required
 def api_certifications_compat():
     if request.method == 'GET':
-        subs = Submission.query.filter_by(user_id=current_user.id).order_by(
-            Submission.created_at.desc()
-        ).all()
+        academic_year = request.args.get('academic_year', '')
+        query = Submission.query.filter_by(user_id=current_user.id)
+        if academic_year:
+            query = query.filter_by(academic_year=academic_year)
+        subs = query.order_by(Submission.created_at.desc()).all()
         return jsonify([_submission_to_certification(s) for s in subs])
 
     data = request.get_json() or {}
@@ -2869,6 +2891,7 @@ def api_certifications_compat():
         description=ci.description,
         proof_filename=', '.join(f.original_filename for f in proof_files[:3]),
         proof_filepath=proof_files[0].file_path,
+        academic_year=data.get('academic_year', _default_academic_year()),
         status=status,
         ai_confidence=ai_confidence,
         ai_decision=ai_decision,
@@ -2936,6 +2959,7 @@ def api_admin_certification_decision_compat(sub_id):
                 completion_date=sub.completion_date,
                 source='upload',
                 submission_id=sub.id,
+                academic_year=sub.academic_year,
             ))
     elif decision == 'rejected':
         sub.status = 'rejected'
@@ -2968,9 +2992,11 @@ def api_admin_certification_decision_compat(sub_id):
 @app.route('/api/admin/stats')
 @admin_required
 def api_admin_stats():
-    approved_score = db.session.query(
-        db.func.coalesce(db.func.sum(UserItem.score), 0)
-    ).scalar() or 0
+    academic_year = request.args.get('academic_year', '')
+    score_query = db.session.query(db.func.coalesce(db.func.sum(UserItem.score), 0))
+    if academic_year:
+        score_query = score_query.filter(UserItem.academic_year == academic_year)
+    approved_score = score_query.scalar() or 0
     try:
         opportunity_count = len(load_activities())
     except Exception:
@@ -3026,9 +3052,15 @@ def api_admin_users():
 
         users = query.order_by(User.created_at.desc()).all()
         result = []
+        admin_year = request.args.get('academic_year', '')
         for u in users:
-            item_count = UserItem.query.filter_by(user_id=u.id).count()
-            submission_count = Submission.query.filter_by(user_id=u.id).count()
+            item_count_query = UserItem.query.filter_by(user_id=u.id)
+            submission_count_query = Submission.query.filter_by(user_id=u.id)
+            if admin_year:
+                item_count_query = item_count_query.filter_by(academic_year=admin_year)
+                submission_count_query = submission_count_query.filter_by(academic_year=admin_year)
+            item_count = item_count_query.count()
+            submission_count = submission_count_query.count()
             result.append({
                 'id': u.id,
                 'student_id': u.student_id,
@@ -3095,15 +3127,25 @@ def api_admin_user_detail(user_id):
 @app.route('/api/admin/users/<int:user_id>/items')
 @admin_required
 def api_admin_user_items(user_id):
-    """查看指定用户的综测项目"""
+    """查看指定用户的综测项目，支持学年筛选"""
     user = User.query.get_or_404(user_id)
-    items = UserItem.query.filter_by(user_id=user_id).order_by(UserItem.created_at.desc()).all()
+    year_filter = request.args.get('year', '')
+    q = UserItem.query.filter_by(user_id=user_id)
+    if year_filter:
+        q = q.filter_by(academic_year=year_filter)
+    items = q.order_by(UserItem.created_at.desc()).all()
+
+    # 收集所有出现过的学年
+    all_items = UserItem.query.filter_by(user_id=user_id).all()
+    years = sorted(set(it.academic_year for it in all_items if it.academic_year), reverse=True)
+
     result = []
     for ui in items:
         d = {'id': ui.id, 'catalog_item_id': ui.catalog_item_id,
              'title': ui.custom_title or '', 'score': ui.score,
              'source': ui.source, 'submission_id': ui.submission_id,
              'completion_date': ui.completion_date.strftime('%Y-%m-%d') if ui.completion_date else '',
+             'academic_year': ui.academic_year or '',
              'created_at': ui.created_at.strftime('%Y-%m-%d %H:%M')}
         if ui.catalog_item_id:
             ci = CatalogItem.query.get(ui.catalog_item_id)
@@ -3111,9 +3153,18 @@ def api_admin_user_items(user_id):
                 d['title'] = ci.title; d['category'] = ci.category
                 d['category_name'] = CAT_INFO.get(ci.category, {}).get('name', '')
                 d['level'] = ci.level; d['section'] = ci.section
+            else:
+                d['title'] = ui.custom_title or '(已删除项目)'
+                d['category_name'] = ''
+                d['level'] = ''
+        else:
+            d['category_name'] = ''
+            d['level'] = ''
+            if not d['title']:
+                d['title'] = '(未命名项目)'
         result.append(d)
     return jsonify({'user': {'id': user.id, 'student_id': user.student_id, 'name': user.name},
-                    'items': result, 'total': len(result)})
+                    'items': result, 'total': len(result), 'years': years})
 
 
 @app.route('/api/admin/users/<int:user_id>/items/<int:item_id>', methods=['DELETE'])

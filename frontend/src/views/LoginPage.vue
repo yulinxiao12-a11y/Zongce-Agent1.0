@@ -152,7 +152,7 @@ async function handleSubmit() {
           <button class="btn btn-primary login-submit" :disabled="loading" type="submit">{{ submitLabel }}</button>
         </form>
 
-        <p class="login-default">默认管理员账号：admin / 000000</p>
+        <p class="login-default">建议用真实姓名和真实学号注册登录，否则会影响项目AI置信度</p>
       </div>
     </section>
   </main>

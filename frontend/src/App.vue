@@ -49,6 +49,8 @@ interface BasketItem {
 interface ApplicationItem {
   id: number
   title: string
+  catalog_item_id?: string
+  academic_year?: string
   dimension: DimensionKey
   award_level: string
   material_manifest: Record<string, boolean>
@@ -418,6 +420,13 @@ const currentTabs = computed(() => (store.roleMode === 'student' ? studentTabs :
 const currentActiveTab = computed(() => (store.roleMode === 'student' ? activeStudentTab.value : activeAdminTab.value))
 const activeRuleDoc = computed(() => ruleDocs.value.find(doc => doc.is_active) || templates.value?.active_rule_document || null)
 const canViewAdmin = computed(() => store.currentUser?.role === 'admin')
+
+function openRuleDoc() {
+  const doc = activeRuleDoc.value
+  if (doc?.file_url) {
+    window.open(imgUrl(doc.file_url), '_blank')
+  }
+}
 const filteredOpportunities = computed(() => {
   return opportunities.value.filter(item => {
     if (item.source_type !== opportunityMode.value) return false
@@ -712,6 +721,18 @@ const auditProgressItems = computed(() => {
   }))
 })
 
+// ---- 被驳回项目 ----
+const rejectedApplications = ref<ApplicationItem[]>([])
+const showRejectedModal = ref(false)
+
+async function loadRejectedApplications() {
+  try {
+    const allData = await api<{ submissions: any[] }>('/submissions')
+    const allApps = (allData.submissions || []).map(mapSubmissionToApplication)
+    rejectedApplications.value = allApps.filter(app => app.status === 'rejected')
+  } catch { /* silent */ }
+}
+
 function sourceStatus(status: string) {
   if (status === 'pending') return 'pending_human'
   if (status === 'auto_approved') return 'approved'
@@ -724,6 +745,8 @@ function mapSubmissionToApplication(row: any): ApplicationItem {
   return {
     id: row.id,
     title: row.title,
+    catalog_item_id: row.catalog_item_id || '',
+    academic_year: row.academic_year || '',
     dimension: row.category === 'sports' ? 'arts_sports' : (row.category || row.dimension || 'academic'),
     award_level: row.level || row.award_level || row.proof_filename || '证明材料',
     material_manifest: {},
@@ -1160,6 +1183,7 @@ async function loadAll() {
     honors.value = honorData
     templates.value = templateData
     ruleDocs.value = docsData
+    loadRejectedApplications()  // 加载全部学年的被驳回项目
     if (yearData?.years?.length) availableAcademicYears.value = yearData.years
     // 首次加载才用服务端学年覆盖默认值，后续保持用户选择
     if (!summary.value && yearData?.current) {
@@ -1676,6 +1700,7 @@ async function submitModalSubmit() {
       catalog_item_id: bestMatch?.id || item.id,
       uploaded_file_ids: uploadedIds,
       completion_date: submitForm.completion_date || undefined,
+      academic_year: currentAcademicYear.value,
       ai_confidence: submitModalConfidence.value,
       ai_decision: submitModalConfidence.value >= 80 ? 'high' : (submitModalConfidence.value >= 60 ? 'medium' : 'low'),
       ai_reason: bestMatch?.reason || '',
@@ -1701,8 +1726,26 @@ function closeSubmitModal() {
     submitModalAnalysisResult.value = null
     submitModalConfidence.value = 0
     submitModalSubmitted.value = false
-  
+
   }, 300)
+}
+
+function resubmitRejected(app: ApplicationItem) {
+  showRejectedModal.value = false
+  activeStudentTab.value = '星轨探索'
+  setTimeout(() => {
+    if (app.catalog_item_id) {
+      const item = catalogItems.value.find(ci => ci.id === app.catalog_item_id)
+      if (item) {
+        openSubmitModal(item)
+        return
+      }
+    }
+    const itemByTitle = catalogItems.value.find(ci => ci.title === app.title)
+    if (itemByTitle) {
+      openSubmitModal(itemByTitle)
+    }
+  }, 200)
 }
 
 async function uploadSingleFile(file: File, proofType = 'general') {
@@ -2419,6 +2462,7 @@ async function submitMatchedMaterial(result: AnalyzeResult, match: AnalyzeMatch)
     const response = await postJson<{ status: string; proofs_complete?: boolean; submission_id?: number }>('/submissions', {
       catalog_item_id: match.id,
       uploaded_file_ids: uploadedFileIds,
+      academic_year: currentAcademicYear.value,
       ai_confidence: match.confidence,
       ai_decision: match.decision || (match.confidence >= 80 ? 'high' : 'medium'),
       ai_reason: match.reason || '',
@@ -2597,6 +2641,7 @@ async function submitTargetedMaterial() {
     const response = await postJson<{ status: string; proofs_complete?: boolean; submission_id?: number }>('/submissions', {
       uploaded_file_ids: uploadedIds,
       completion_date: targetManualForm.completion_date,
+      academic_year: currentAcademicYear.value,
       manual_title: targetManualForm.title.trim(),
       manual_category: targetManualForm.category,
       manual_level: targetManualForm.level,
@@ -2704,7 +2749,7 @@ onMounted(async () => {
         </button>
       </nav>
 
-      <div class="sidebar-footer">
+      <div class="sidebar-footer" @click="openRuleDoc" title="点击查看细则文件">
         <span>当前细则</span>
         <strong>{{ activeRuleDoc?.name || '2025年7月电信学院综测细则（公示版）' }}</strong>
       </div>
@@ -2889,7 +2934,10 @@ onMounted(async () => {
           <div class="completed-score-panel">
             <div class="score-panel-head">
               <h2>我已完成的加分项目（{{ completedScoreItems.length }}）</h2>
-              <button class="btn-ghost" @click="activeStudentTab = '机会大厅'">去大厅添加更多</button>
+              <span class="score-panel-actions">
+                <button class="btn-ghost" @click="activeStudentTab = '星轨探索'">添加更多项目</button>
+                <button v-if="rejectedApplications.length" class="btn-ghost" @click="loadRejectedApplications(); showRejectedModal = true">查看被驳回项目（{{ rejectedApplications.length }}）</button>
+              </span>
             </div>
             <div class="score-project-table">
               <div class="score-project-head">
@@ -3850,7 +3898,7 @@ onMounted(async () => {
         </ul>
         <h3>综测规则提示</h3>
         <p>{{ selectedOpportunity.credit_hint }}</p>
-        <p class="muted">{{ selectedOpportunity.rule_ref }}</p>
+        <p v-if="selectedOpportunity.rule_ref && selectedOpportunity.rule_ref !== selectedOpportunity.credit_hint" class="muted">{{ selectedOpportunity.rule_ref }}</p>
         <el-button type="primary" @click="chooseForCert(selectedOpportunity); selectedOpportunity = null">用这个活动提交认证</el-button>
       </div>
     </el-dialog>
@@ -4179,6 +4227,51 @@ onMounted(async () => {
             <a v-for="f in item.files" :key="f.id" :href="f.url || ('/api/uploads/' + f.id)" target="_blank" class="apc-file-link">
               📎 {{ f.name || f.filename || '查看材料' }}
             </a>
+          </div>
+        </div>
+      </div>
+    </el-dialog>
+
+    <!-- ====== 被驳回项目弹窗 ====== -->
+    <el-dialog v-model="showRejectedModal" width="820px" class="rejected-progress-dialog" :close-on-click-modal="true">
+      <template #header>
+        <strong>被驳回项目</strong>
+        <span style="font-size:12px;color:var(--text-muted);margin-left:8px;">共 {{ rejectedApplications.length }} 项</span>
+        <span style="font-size:12px;color:var(--accent-amber);margin-left:8px;">可修改材料后重新提交</span>
+      </template>
+
+      <div v-if="!rejectedApplications.length" style="text-align:center;padding:40px;color:var(--text-muted);">
+        <strong style="font-size:48px;">🎉</strong>
+        <p>没有被驳回的项目</p>
+      </div>
+
+      <div v-else class="audit-progress-list">
+        <div v-for="item in rejectedApplications" :key="item.id" class="audit-progress-card rejected-card">
+          <div class="apc-header">
+            <strong class="apc-title">{{ item.title }}</strong>
+            <span class="apc-status rejected">已驳回</span>
+          </div>
+          <div class="apc-meta">
+            <span>{{ item.dimension === 'arts_sports' ? '文体表现' : item.dimension === 'moral' ? '品德行为表现' : '学业表现' }}</span>
+            <span>{{ item.award_level || '-' }}</span>
+            <span>建议 +{{ item.suggested_score }}分</span>
+          </div>
+          <div class="apc-confidence-row">
+            <span>AI 置信率</span>
+            <div class="apc-confidence-bar">
+              <div class="apc-confidence-fill" :style="{ width: item.ai_confidence * 100 + '%', background: item.ai_confidence * 100 >= 80 ? '#10b981' : item.ai_confidence * 100 >= 50 ? '#f59e0b' : '#ef4444' }" />
+            </div>
+            <strong :style="{ color: item.ai_confidence * 100 >= 80 ? 'var(--success)' : item.ai_confidence * 100 >= 50 ? 'var(--accent-amber)' : 'var(--danger)' }">{{ (item.ai_confidence * 100).toFixed(1) }}%</strong>
+          </div>
+          <div v-if="item.risk_tags.length" class="apc-tags">
+            <span v-for="tag in item.risk_tags" :key="tag" class="apc-tag">{{ tag }}</span>
+          </div>
+          <div v-if="item.admin_comment" class="apc-remarks">
+            <strong>驳回理由：</strong>{{ item.admin_comment }}
+          </div>
+          <div v-if="item.ai_review?.recommendation" class="apc-reason">{{ item.ai_review.recommendation.slice(0, 120) }}{{ item.ai_review.recommendation.length > 120 ? '...' : '' }}</div>
+          <div class="apc-actions">
+            <button class="btn-primary-sm" @click="resubmitRejected(item)">重新提交</button>
           </div>
         </div>
       </div>

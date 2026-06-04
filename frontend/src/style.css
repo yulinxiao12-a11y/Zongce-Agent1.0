@@ -928,6 +928,11 @@ body {
   color: var(--sidebar-muted);
   background: rgba(255, 255, 255, 0.06);
   font-size: 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.sidebar-footer:hover {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .sidebar-footer span,
@@ -1810,6 +1815,39 @@ body {
 }
 .apc-file-link:hover { background: #eff6ff; }
 
+.btn-rejected {
+  color: #ef4444 !important;
+  background: #fef2f2 !important;
+  border: 1px solid #fecaca !important;
+}
+.btn-rejected:hover {
+  background: #fee2e2 !important;
+}
+
+.apc-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  justify-content: flex-end;
+}
+.apc-actions .btn-primary-sm {
+  height: 34px;
+  padding: 0 16px;
+  font-size: 13px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  color: #fff;
+  background: var(--blue);
+}
+.apc-actions .btn-primary-sm:hover {
+  background: var(--blue-dark);
+}
+
+.rejected-card {
+  border-left: 3px solid #ef4444;
+}
+
 .score-chart-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1858,6 +1896,13 @@ body {
   color: #0f1b33;
   font-size: 19px;
   font-weight: 800;
+}
+
+.score-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
 }
 
 .score-panel-head h2 span {

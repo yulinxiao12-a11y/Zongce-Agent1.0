@@ -88,10 +88,16 @@
 
 <!-- 查看用户综测项目弹窗 -->
 <div class="modal-overlay" id="itemsModal" style="display:none;">
-    <div class="modal-box" style="max-width:700px;max-height:80vh;overflow-y:auto;">
-        <h3 id="itemsModalTitle">用户综测项目</h3>
-        <div id="itemsModalBody"></div>
-        <div class="modal-actions"><button class="btn btn-outline btn-sm" onclick="document.getElementById('itemsModal').style.display='none'">关闭</button></div>
+    <div class="modal-box" style="max-width:900px;max-height:85vh;overflow-y:auto;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+            <h3 id="itemsModalTitle" style="margin:0;">用户综测项目</h3>
+            <select id="itemsYearFilter" onchange="viewUserItems(currentViewUid, currentViewName, currentViewSid)" style="width:140px;padding:6px 10px;border:1.5px solid #e5e7eb;border-radius:6px;font-size:13px;">
+                <option value="">全部学年</option>
+            </select>
+        </div>
+        <div id="itemsSummary" style="font-size:13px;color:var(--text-muted);margin-bottom:12px;"></div>
+        <div id="itemsModalBody" style="overflow-x:auto;"></div>
+        <div class="modal-actions" style="margin-top:16px;"><button class="btn btn-outline btn-sm" onclick="document.getElementById('itemsModal').style.display='none'">关闭</button></div>
     </div>
 </div>
 {% endblock %}
@@ -281,44 +287,79 @@ document.getElementById('itemsModal').addEventListener('click', function(e) {
     if (e.target === this) this.style.display = 'none';
 });
 
+let currentViewUid = null;
+let currentViewName = '';
+let currentViewSid = '';
+
 async function adminDeleteUserItem(itemId, uid, title) {
     if (!confirm(`确定删除「${title}」吗？此操作同步到学生端，不可恢复。`)) return;
     try {
-        const resp = await fetch(`/api/user-items/${itemId}`, {method:'DELETE'});
+        const resp = await fetch(`/api/admin/users/${uid}/items/${itemId}`, {method:'DELETE'});
         if (!resp.ok) throw new Error('删除失败');
         showToast('已删除，学生端同步更新');
-        // 刷新列表
-        viewUserItems(uid, '', '');
+        viewUserItems(uid, currentViewName, currentViewSid);
     } catch(err) { showToast(err.message); }
 }
 
 async function viewUserItems(uid, name, sid) {
-    document.getElementById('itemsModalTitle').textContent = `综测项目 — ${escHtml(name)} (${escHtml(sid)})`;
-    document.getElementById('itemsModalBody').innerHTML = '<div class="spinner"></div>';
+    currentViewUid = uid;
+    currentViewName = name;
+    currentViewSid = sid;
+    document.getElementById('itemsModalTitle').textContent = `综测项目 - ${escHtml(name)} (${escHtml(sid)})`;
+    document.getElementById('itemsModalBody').innerHTML = '<div class="spinner" style="margin:40px auto;"></div>';
     document.getElementById('itemsModal').style.display = 'flex';
+
+    const yearFilter = document.getElementById('itemsYearFilter');
+    const selectedYear = yearFilter ? yearFilter.value : '';
+    const url = selectedYear ? `/api/admin/users/${uid}/items?year=${encodeURIComponent(selectedYear)}` : `/api/admin/users/${uid}/items`;
+
     try {
-        const resp = await fetch(`/api/admin/users/${uid}/items`);
+        const resp = await fetch(url);
         const data = await resp.json();
+
+        // Populate year dropdown
+        if (yearFilter && data.years && data.years.length) {
+            yearFilter.innerHTML = '<option value="">全部学年</option>' + data.years.map(y => `<option value="${y}" ${y === selectedYear ? 'selected' : ''}>${y}</option>`).join('');
+        }
+
+        const totalScore = data.items.reduce((s, i) => s + (i.score || 0), 0);
+        document.getElementById('itemsSummary').textContent = `共 ${data.total} 项 | 总分: ${totalScore} ${selectedYear ? '| 学年: ' + selectedYear : ''}`;
+
         if (data.items.length === 0) {
-            document.getElementById('itemsModalBody').innerHTML = '<p style="text-align:center;padding:30px;color:var(--text-muted);">该用户暂无综测项目</p>';
-        } else {
-            const catBadges = {moral:'badge-moral', academic:'badge-academic', sports:'badge-sports'};
-            const lvlBadges = {'国家级':'badge-national','省级':'badge-provincial','校级':'badge-school','院级':'badge-college','班级':'badge-college'};
-            document.getElementById('itemsModalBody').innerHTML = `
-                <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">共 ${data.total} 项 | 总分: ${data.items.reduce((s,i)=>s+(i.score||0),0)}</p>
-                <table><thead><tr><th>项目名称</th><th>大类</th><th>级别</th><th>得分</th><th>来源</th><th>完成日期</th><th>操作</th></tr></thead>
+            document.getElementById('itemsModalBody').innerHTML = '<p style="text-align:center;padding:40px;color:var(--text-muted);">该用户暂无综测项目</p>';
+            return;
+        }
+
+        const catMap = { moral: '思想品德', academic: '学业表现', sports: '文体表现' };
+        const sourceMap = { upload: '上传审核', manual: '手动添加', admin: '管理员添加' };
+
+        document.getElementById('itemsModalBody').innerHTML = `
+            <table class="admin-table" style="min-width:780px;">
+                <thead>
+                    <tr>
+                        <th style="min-width:160px;">项目名称</th>
+                        <th style="width:80px;">大类</th>
+                        <th style="width:60px;">级别</th>
+                        <th style="width:60px;">得分</th>
+                        <th style="width:80px;">来源</th>
+                        <th style="width:90px;">学年</th>
+                        <th style="width:100px;">完成日期</th>
+                        <th style="width:50px;">操作</th>
+                    </tr>
+                </thead>
                 <tbody>${data.items.map(i => `
                     <tr id="admin-item-row-${i.id}">
-                        <td><strong>${escHtml(i.title)}</strong></td>
-                        <td><span class="badge ${catBadges[i.category]||'badge-moral'}">${escHtml(i.category_name||'')}</span></td>
-                        <td><span class="badge ${lvlBadges[i.level]||'badge-college'}">${escHtml(i.level||'-')}</span></td>
-                        <td><strong style="color:var(--primary);">+${i.score}</strong></td>
-                        <td style="font-size:12px;">${i.source==='upload'?'上传审核':(i.source==='manual'?'手动添加':'管理员添加')}</td>
-                        <td style="font-size:12px;">${i.completion_date||'-'}</td>
-                        <td><button class="btn btn-outline btn-sm" onclick="adminDeleteUserItem(${i.id},${uid},'${escJs(i.title)}')" style="color:var(--danger);font-size:11px;"><i class="fas fa-trash"></i></button></td>
+                        <td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px;" title="${escHtml(i.title)}"><strong>${escHtml(i.title)}</strong></td>
+                        <td style="white-space:nowrap;font-size:13px;">${catMap[i.category] || '-'}</td>
+                        <td style="white-space:nowrap;font-size:13px;">${i.level || '-'}</td>
+                        <td style="white-space:nowrap;"><strong style="color:var(--primary);">+${i.score}</strong></td>
+                        <td style="white-space:nowrap;font-size:12px;">${sourceMap[i.source] || i.source || '-'}</td>
+                        <td style="white-space:nowrap;font-size:12px;">${i.academic_year || '-'}</td>
+                        <td style="white-space:nowrap;font-size:12px;">${i.completion_date || '-'}</td>
+                        <td><button class="btn btn-outline btn-sm" onclick="adminDeleteUserItem(${i.id},${uid},'${escJs(i.title)}')" style="color:var(--danger);font-size:11px;padding:2px 8px;" title="删除"><i class="fas fa-trash"></i></button></td>
                     </tr>
-                `).join('')}</tbody></table>`;
-        }
+                `).join('')}</tbody>
+            </table>`;
     } catch(err) {
         document.getElementById('itemsModalBody').innerHTML = '<p style="color:var(--danger);text-align:center;padding:20px;">加载失败</p>';
     }
