@@ -20,7 +20,7 @@ from flask_login import (LoginManager, login_user, logout_user, login_required,
 
 from catalog import CATALOG, CAT_INFO, SUBCAT_NAMES, get_required_proofs
 from models import db, User, CatalogItem, UserItem, Submission, UploadedFile, RegulationDoc, CourseGrade, AuditLog
-from ai_engine import analyze_files, ai_suggest_item_fields
+from ai_engine import analyze_files, ai_suggest_item_fields, extract_text_from_file, ai_parse_activity_form
 from competitions_data import COMPETITIONS
 from activities_data import load_activities, add_activity, update_activity, delete_activity
 from honor_data import load_honors, add_honor, update_honor, delete_honor
@@ -469,20 +469,20 @@ def _activity_to_opportunity(activity):
         'dimension_label': dimension_label,
         'organizer': activity.get('organizer', ''),
         'location': activity.get('location', ''),
-        'start_time': activity.get('date', ''),
-        'deadline': activity.get('date', ''),
-        'season_months': '',
-        'credit_hint': activity.get('related_score', ''),
-        'rule_ref': f'综测细则：{activity.get("category", "")}类，{activity.get("level", "")}级别，加分以最终审核为准',
+        'start_time': activity.get('start_time') or activity.get('date', ''),
+        'deadline': activity.get('deadline') or activity.get('date', ''),
+        'season_months': activity.get('season_months', ''),
+        'credit_hint': activity.get('credit_hint') or activity.get('related_score', ''),
+        'rule_ref': activity.get('rule_ref') or f'综测细则：{activity.get("category", "")}类，{activity.get("level", "")}级别，加分以最终审核为准',
         'official_url': activity.get('official_url', ''),
         'registration_url': activity.get('registration_url', ''),
-        'contact_email': '',
-        'article_url': '',
-        'group_qr_url': '',
+        'contact_email': activity.get('contact_email', ''),
+        'article_url': activity.get('article_url', ''),
+        'group_qr_url': activity.get('group_qr_url', ''),
         'description': activity.get('description', ''),
-        'requirements': ['活动通知', '参与证明或结果证明'],
-        'tags': [item for item in [activity.get('level'), activity.get('status')] if item],
-        'attachments': [],
+        'requirements': activity.get('requirements') or ['活动通知', '参与证明或结果证明'],
+        'tags': activity.get('tags') or [item for item in [activity.get('level'), activity.get('status')] if item],
+        'attachments': activity.get('attachments', []),
         'images': activity.get('images', []),
         'roi_score': _activity_roi(activity),
         'in_basket': False,
@@ -864,14 +864,25 @@ def api_opportunities_compat():
         'category': data.get('category') or data.get('dimension_label') or '院级活动',
         'level': data.get('award_level') or data.get('level') or '院级',
         'date': data.get('deadline') or data.get('start_time') or '',
+        'start_time': data.get('start_time', ''),
+        'deadline': data.get('deadline', ''),
         'organizer': data.get('organizer', ''),
         'description': data.get('description', ''),
         'status': data.get('status') or '即将开始',
         'related_score': data.get('credit_hint') or data.get('rule_ref') or '',
         'images': data.get('images', []),
+        'attachments': data.get('attachments', []),
         'location': data.get('location', ''),
         'official_url': data.get('official_url', ''),
         'registration_url': data.get('registration_url', ''),
+        'contact_email': data.get('contact_email', ''),
+        'article_url': data.get('article_url', ''),
+        'group_qr_url': data.get('group_qr_url', ''),
+        'season_months': data.get('season_months', ''),
+        'credit_hint': data.get('credit_hint', ''),
+        'rule_ref': data.get('rule_ref', ''),
+        'requirements': data.get('requirements', []),
+        'tags': data.get('tags', []),
     })
     return jsonify(_activity_to_opportunity(activity)), 201
 
@@ -1202,6 +1213,30 @@ def api_admin_activity_ai_fill():
     desc = data.get('description', '')
     suggestion = ai_suggest_item_fields(name, desc)
     return jsonify(suggestion)
+
+
+@app.route('/api/admin/activities/ai-parse-file', methods=['POST'])
+@admin_required
+def api_admin_activities_ai_parse_file():
+    """上传文件 → OCR → GLM-5 提取活动表单字段"""
+    data = request.get_json()
+    file_ids = data.get('uploaded_file_ids', [])
+
+    all_text = ''
+    for uf_id in file_ids:
+        uf = UploadedFile.query.filter_by(id=uf_id, user_id=current_user.id).first()
+        if uf:
+            full_path = os.path.join(app.config['UPLOAD_FOLDER'], uf.file_path)
+            if os.path.exists(full_path):
+                extracted = extract_text_from_file(full_path, uf.file_type)
+                if extracted:
+                    all_text += '\n' + extracted
+
+    if not all_text.strip():
+        return jsonify({'error': '未能从文件中提取到有效文字'}), 400
+
+    result = ai_parse_activity_form(all_text)
+    return jsonify(result)
 
 
 # ============================================================
@@ -1557,7 +1592,7 @@ def api_course_grades():
 def api_course_grades_ocr():
     """OCR识别成绩单：接受已上传的 file_ids，返回识别出的课程列表（不保存）"""
     from models import CourseGrade
-    from ai_engine import extract_text_from_file, extract_courses_from_ocr_text
+    from ai_engine import extract_text_from_file, ai_extract_courses_from_ocr_text
 
     data = request.get_json()
     file_ids = data.get('uploaded_file_ids', [])
@@ -1575,10 +1610,17 @@ def api_course_grades_ocr():
     results = []
     for f in files:
         try:
-            # 使用已有的 OCR 函数提取文字
-            ocr_text = extract_text_from_file(f.file_path, f.file_type)
+            # 使用已有的 OCR 函数提取文字（需要拼接完整路径）
+            full_path = os.path.join(app.config['UPLOAD_FOLDER'], f.file_path)
+            if not os.path.exists(full_path):
+                results.append({
+                    'file_id': f.id, 'file_name': f.original_filename,
+                    'error': '文件未找到', 'courses': [],
+                })
+                continue
+            ocr_text = extract_text_from_file(full_path, f.file_type)
             # 从 OCR 文字中提取课程
-            courses = extract_courses_from_ocr_text(ocr_text or '')
+            courses = ai_extract_courses_from_ocr_text(ocr_text or '')
 
             results.append({
                 'file_id': f.id,
@@ -2149,6 +2191,18 @@ def api_analyze():
         })
 
     return jsonify({'results': formatted})
+
+
+@app.route('/ai/parse-opportunity', methods=['POST'])
+@login_required
+def ai_parse_opportunity():
+    """粘贴通知文字 → GLM-5 提取活动表单字段"""
+    data = request.get_json()
+    raw_text = data.get('raw_text', '')
+    if not raw_text or not raw_text.strip():
+        return jsonify({'error': '请提供通知文字内容'}), 400
+    result = ai_parse_activity_form(raw_text)
+    return jsonify(result)
 
 
 # ============================================================

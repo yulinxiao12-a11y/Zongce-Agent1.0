@@ -130,10 +130,17 @@ def _get_llm():
 # Text Extraction
 # ══════════════════════════════════════════
 def _normalize_text(text: str) -> str:
-    """Clean OCR text while preserving Chinese, English, digits, and audit punctuation."""
-    text = re.sub(r'\s+', ' ', text or '')
-    text = text.replace('?', '(').replace('?', ')').replace('?', ':').replace('?', ',')
-    text = re.sub(r'[^\u4e00-\u9fffA-Za-z0-9\s\(\)\[\],.?:;?\-+/=<>%#_]', '', text)
+    """Clean OCR text for LLM/regex consumption.
+    Preserve Chinese chars, ASCII alphanum, common punctuation.
+    """
+    text = re.sub(r'[^\S\n]+', ' ', text or '')  # collapse horizontal whitespace only, preserve line breaks
+    # Convert fullwidth punctuation to ASCII for consistent regex matching
+    text = text.replace('\uff1a', ':').replace('\uff0c', ',').replace('\u3001', ',')
+    text = text.replace('\uff08', '(').replace('\uff09', ')')
+    text = text.replace('\u201c', '"').replace('\u201d', '"')
+    text = text.replace('\u2018', "'").replace('\u2019', "'")
+    # Remove chars that are definitely noise
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
     return text.strip()
 
 def extract_text_from_image(file_path: str) -> str:
@@ -1868,7 +1875,10 @@ def _looks_like_course_name(text: str) -> bool:
     skip_words = {'成绩单', '学号', '姓名', '班级', '专业', '学院', '学年', '学期',
                   '序号', '备注', '合计', '平均', '总分', '制表', '审核', '第', '页',
                   '课程名称', '成绩', '学分', '绩点', '课程类型', '考试', '考查',
-                  '必修课', '选修课', '限选课', '公选课', '教务处', '打印', '日期'}
+                  '必修课', '选修课', '限选课', '公选课', '教务处', '打印', '日期',
+                  '成绩查询', '学生成绩', '成绩表', '查询', '统计', '在校成绩',
+                  '入学时间', '毕业时间', '培养层次', '学制', '院系', '年级',
+                  '其余成绩', '无', '版本V', '首页', '全部', '合格', '通过', '考查课'}
     if text.strip() in skip_words:
         return False
     return True
@@ -2016,6 +2026,574 @@ def extract_courses_from_ocr_text(ocr_text: str) -> list:
                 })
 
     return results
+
+
+def _group_lines_by_course_code(ocr_text: str) -> list:
+    """用课程编号（8-9位数字）作为锚点，将 OCR 行分组为课程块。
+
+    成绩单 OCR 输出特点：表格的每个单元格变成独立一行，
+    因此需要通过课程编号来重建"这一行属于哪门课"的关系。
+
+    返回: [{"code": "106330095", "lines": ["106330095", "公共选修课", "1,5", ...]}, ...]
+    """
+    if not ocr_text or not ocr_text.strip():
+        return []
+
+    lines = [l.strip() for l in ocr_text.strip().split('\n')]
+    lines = [l for l in lines if l]  # 去掉空行
+
+    # 找到所有课程编号（8-9位纯数字行）
+    course_indices = []
+    for i, line in enumerate(lines):
+        if re.match(r'^\d{8,9}$', line):
+            course_indices.append(i)
+
+    if not course_indices:
+        return []
+
+    blocks = []
+    for j, start_idx in enumerate(course_indices):
+        end_idx = course_indices[j + 1] if j + 1 < len(course_indices) else len(lines)
+        block_lines = lines[start_idx:end_idx]
+        blocks.append({
+            'code': block_lines[0],  # 第一行就是课程编号
+            'lines': block_lines,
+        })
+
+    return blocks
+
+
+def _normalize_number_token(token: str) -> str:
+    """修复 OCR 中的数字格式问题：逗号小数点 1,5→1.5，去掉多余空格"""
+    t = token.strip()
+    # 修复逗号小数点：1,5 → 1.5, 1,0 → 1.0
+    if re.match(r'^\d{1,2},\d{1,2}$', t):
+        t = t.replace(',', '.')
+    return t
+
+
+def _regex_extract_from_block(block: dict) -> dict | None:
+    """从单个课程块中用正则+启发式提取字段（LLM 降级方案）。
+
+    核心思路：分类 OCR 各行 → 课程名 / 课程类型 / 数字（学分+绩点）。
+    噪声行通过长度、关键词、尾部后缀三重过滤。
+    """
+    lines = block['lines']
+    code = block['code']
+
+    # ── 噪声判断 ──
+    _NOISE_SUFFIX = ('学院', '学部', '工作部', '办公', '中心')
+    _NOISE_KW = (
+        '其余', '版本', '成绩查询', '成绩单', '课程名称', '课程编号',
+        '学号', '姓名', '班级', '学分', '绩点', '考试',
+        '教务处', '打印', '首页', '全部', '合格', '通过', '统计',
+        '合计', '入学', '毕业',
+    )
+
+    def _noisy(s: str) -> bool:
+        if not s:
+            return True
+        if len(s) == 1:                     # 单字（如"无"）
+            return True
+        if re.match(r'^\d{4,}$', s):        # 纯数字（课程编号、年份）
+            return True
+        if re.match(r'^\d{4}-\d{4}$', s):   # 学年范围
+            return True
+        if s.endswith(_NOISE_SUFFIX):       # 学院/部门
+            return True
+        for kw in _NOISE_KW:
+            if kw in s:
+                return True
+        return False
+
+    # ── 分类各行 ──
+    classified = [l.strip() for l in lines[1:] if not _noisy(l.strip())]
+
+    # ── 提取课程名、类型 ──
+    course_name = ''  # 空=未找到
+    course_type = '必修'
+
+    for item in classified:
+        # 数字 → 跳过（后面统一处理）
+        num_str = _normalize_number_token(item)
+        try:
+            float(num_str)
+            continue
+        except (ValueError, TypeError):
+            pass
+
+        # 课程类型（含"课"字）
+        if '课' in item:
+            if '专业选修' in item or '专业限选' in item:
+                course_type = '限选'
+            elif '公共选修' in item or '公选' in item or '通识' in item:
+                course_type = '公选'
+            elif '限选' in item:
+                course_type = '限选'
+            elif '任选' in item:
+                course_type = '任选'
+            continue
+
+        # 课程名候选
+        if (not course_name
+                and _looks_like_course_name(item)
+                and not _noisy(item)  # 双重保险
+                and 2 <= len(item) <= 20):
+            course_name = item
+
+    # 无有效名称 → 丢弃
+    if not course_name:
+        return None
+
+    # 名称合理性校验
+    if re.match(r'^\d{6,}$', course_name):
+        return None
+    for kw in ('其余', '版本', '成绩查询', '成绩单', '打印', '教务处'):
+        if kw in course_name:
+            return None
+
+    # ── 提取数字（学分、绩点）──
+    numbers = []
+    for item in classified:
+        num_str = _normalize_number_token(item)
+        try:
+            val = float(num_str)
+            numbers.append((val, item))
+        except (ValueError, TypeError):
+            pass
+
+    credits = None
+    grade = None
+
+    for val, orig in numbers:
+        if credits is None and 0.1 <= val <= 15:
+            # 学分特征：≤6、逗号小数点、整数值
+            if val <= 1.0 or (',' in orig) or (val == int(val) and val <= 6):
+                credits = val
+                continue
+        if grade is None and 2.0 <= val <= 5.0:
+            grade = val
+            continue
+        # 回退
+        if credits is None:
+            credits = val
+        elif grade is None and val > 1.0:
+            grade = val
+
+    if credits is None and grade is None:
+        return None
+
+    return {
+        'course_name': course_name,
+        'grade': grade if grade is not None else 0,
+        'credits': credits if credits is not None else 1.0,
+        'course_type': course_type,
+        'confidence': 0.65,
+    }
+
+
+def ai_extract_courses_from_ocr_text(ocr_text: str) -> list:
+    """GLM-5 主导的课程成绩提取。
+
+    策略：
+    1. 用课程编号（8-9位数字）将 OCR 输出的各行分组为课程块
+    2. 每块发给 GLM-5 逐块提取字段
+    3. GLM-5 不可用时降级到逐块正则
+
+    返回: [{"course_name": str, "grade": float, "credits": float,
+            "course_type": str, "confidence": float}]
+    """
+    if not ocr_text or not ocr_text.strip():
+        return []
+
+    # Step 1: 分组
+    blocks = _group_lines_by_course_code(ocr_text)
+    if not blocks:
+        # 没有课程编号模式，尝试旧版逐行解析
+        return extract_courses_from_ocr_text(ocr_text)
+
+    # Step 2: GLM-5 批量提取
+    if _get_llm():
+        try:
+            from custom_llm import chat
+
+            # 构建分块文本（每块一行，方便 LLM 阅读）
+            blocks_text_parts = []
+            for i, b in enumerate(blocks):
+                lines_text = ' | '.join(b['lines'])
+                blocks_text_parts.append(f'[块{i+1}] {lines_text}')
+            blocks_text = '\n'.join(blocks_text_parts)
+
+            prompt = f"""你是高校成绩单解析助手。以下是 OCR 从学生成绩表中识别出的文字。
+每行是一个"课程块"，用 | 分隔了 OCR 各行（表格的每个单元格变成了一行）。
+
+【原始表格结构】
+成绩单表格列：学年 | 课程编号(8-9位数字) | 课程名称 | 课程类型 | 学分 | 绩点 | 课程归属(学院) | 备注
+
+【OCR 实际格式】
+每个"课程块"以课程编号开头，后续行是该课程的各字段（顺序可能不固定）：
+  块示例: 201041919 | 大学英语 | 专业选修课 | 1,0 | 4.10 | 电子信息学院
+
+【字段识别规则】
+- course_name: 纯中文课程名，2-15字。不包含"学院""大学""部""课""成绩""学分"等词。若原文中完全没有课程名只有课程编号→跳过该课程，不要用编号充当名称
+- course_type: 必修/限选/任选/公选。若出现"专业选修课"→限选；"公共选修课"→公选；"通识选修课"→公选
+- credits: 学分值(0.25-15)。特征：小数值，可能是 1,5 格式(逗号=小数点)，出现在课类型附近
+- grade: 绩点或成绩。若为 2.0-5.0 带小数(如3.90,4.70)→绩点(5分制)；若 60-100→百分制成绩
+- 忽略：学院名(XX学院/XX学部)、"其余成绩""无""必修"(考试类型标记)、年份(2025-2026)、版本号
+
+【数字区分技巧】
+- 像 "1,5" "1,0" 是学分(逗号=小数点)，"3.90" "4.70" "4,00" 是绩点
+- 一个课程块中通常先出现学分、后出现绩点
+
+【输出要求】
+返回纯 JSON 数组。每门课程一个对象。如果某门课学分和绩点都找不到，跳过该课程。
+
+课程块列表:
+{blocks_text[:6000]}"""
+
+            resp = chat(messages=[{'role': 'user', 'content': prompt}], temperature=0.1)
+            content = resp.content
+            if content:
+                jm = re.search(r'\[[\s\S]*\]', content)
+                if jm:
+                    parsed = json.loads(jm.group(0))
+                    if isinstance(parsed, list) and len(parsed) > 0:
+                        results = []
+                        seen = set()
+                        for item in parsed:
+                            if not isinstance(item, dict):
+                                continue
+                            name = str(item.get('course_name', '')).strip()
+                            if not name:
+                                continue
+                            # 过滤：课程名不能是纯数字（课程编号）
+                            if re.match(r'^\d{6,}$', name):
+                                continue
+                            # 过滤表头/噪声
+                            if name in seen:
+                                continue
+                            try:
+                                grade = float(item.get('grade', -1))
+                                credits = float(item.get('credits', -1))
+                            except (ValueError, TypeError):
+                                continue
+                            if not (0.1 <= grade <= 100):
+                                continue
+                            if not (0.1 <= credits <= 15):
+                                continue
+                            ctype = str(item.get('course_type', '必修')).strip()
+                            if ctype not in ('必修', '限选', '任选', '公选'):
+                                ctype = _detect_course_type(name)
+                            conf = float(item.get('confidence', 0.8))
+                            conf = max(0.6, min(0.98, conf))
+
+                            seen.add(name)
+                            results.append({
+                                'course_name': name,
+                                'grade': grade,
+                                'credits': credits,
+                                'course_type': ctype,
+                                'confidence': conf,
+                            })
+                        if results:
+                            return results
+        except Exception:
+            pass
+
+    # Step 3: 降级 — 逐块简单正则（无 LLM 时的兜底）
+    results = []
+    seen = set()
+    for block in blocks:
+        lines = block['lines']
+
+        # 找课程名：第一个看起来像课程名的行（不含'课'、不是数字、不是学院等）
+        name = ''
+        ctype = '必修'
+        for line in lines[1:]:
+            s = line.strip()
+            if not s or len(s) == 1:
+                continue
+            if re.match(r'^\d{4,}$', s) or re.match(r'^\d{4}-\d{4}$', s):
+                continue
+            if s.startswith(('其余成绩', '版本V', '成绩', '课程', '学号', '姓名', '班级', '专业')):
+                continue
+            if s.endswith(('学院', '大学', '学部', '工作部', '办公', '中心')):
+                continue
+            if '课' in s:
+                # 课程类型标签
+                if '专业选修' in s or '专业限选' in s:
+                    ctype = '限选'
+                elif '公共选修' in s or '公选' in s or '通识' in s:
+                    ctype = '公选'
+                elif '限选' in s:
+                    ctype = '限选'
+                elif '任选' in s:
+                    ctype = '任选'
+                continue
+            # 候选课程名
+            try:
+                float(_normalize_number_token(s))
+                continue  # 是数字，跳过
+            except (ValueError, TypeError):
+                pass
+            if _looks_like_course_name(s):
+                name = s
+                break
+
+        if not name:
+            continue
+
+        # 找数字
+        numbers = []
+        for line in lines[1:]:
+            s = line.strip()
+            try:
+                val = float(_normalize_number_token(s))
+                numbers.append(val)
+            except (ValueError, TypeError):
+                pass
+
+        credits = None
+        grade = None
+        for val in numbers:
+            if credits is None and 0.1 <= val <= 15:
+                if val <= 1.0 or val == int(val) or val <= 3.0:
+                    credits = val
+                    continue
+            if grade is None and 2.0 <= val <= 5.0:
+                grade = val
+                continue
+            if credits is None:
+                credits = val
+            elif grade is None and val > 1.0:
+                grade = val
+
+        if credits is None and grade is None:
+            continue
+        if name in seen:
+            continue
+
+        seen.add(name)
+        results.append({
+            'course_name': name,
+            'grade': grade if grade is not None else 0,
+            'credits': credits if credits is not None else 1.0,
+            'course_type': ctype,
+            'confidence': 0.65,
+        })
+
+    return results
+
+
+def ai_parse_activity_form(text: str) -> dict:
+    """GLM-5 主导的活动表单字段提取。LLM负责理解文本内容，正则负责credit_hint验证。
+
+    原则：
+    - LLM 提取所有文本可理解的字段
+    - credit_hint/rule_ref 绝不让LLM碰（容易编造分数/条目）
+    - 未知必需字段填"待通知"而非空字符串
+    """
+    raw = (text or '').strip()
+    cleaned = _normalize_text(raw)
+
+    # ── 日期原子（正则兜底用）──
+    DATE_ATOM = r'(?:20\d{2}[年.\-/\s]*)?\d{1,2}[月.\-/\s]*\d{1,2}[日号]?'
+
+    # ══════════════════════════════════════
+    # 正则: 仅提取 主办方/地点/日期（LLM可用时做兜底）
+    # ══════════════════════════════════════
+    def _re_extract() -> dict:
+        d = {
+            'title': '', 'category': '活动通知', 'dimension': 'moral',
+            'level': '', 'organizer': '电子与信息学院',
+            'location': '', 'start_time': '', 'deadline': '',
+            'description': cleaned[:2000] if cleaned else '',
+            'season_months': '', 'credit_hint': '', 'rule_ref': '',
+        }
+
+        # 标题
+        for pat in [
+            r'(关于[^\n]{10,120}(?:通知|大赛|竞赛|活动|比赛)[^\n]{0,20})',
+            r'(第.{1,6}届[^\n]{6,80}(?:大赛|竞赛|活动|挑战赛|杯)[^\n]{0,20})',
+            r'([^\n]{10,120}(?:通知|大赛|竞赛|活动|比赛|报名)[^\n]{0,10})',
+        ]:
+            m = re.search(pat, cleaned)
+            if m:
+                d['title'] = m[1].strip()[:160]
+                break
+        if not d['title']:
+            for line in [l.strip() for l in cleaned.split('\n') if l.strip()]:
+                if 10 <= len(line) <= 160 and not re.match(
+                    r'(地点|时间|报名|联系|附件|电话|邮箱|QQ|微信|指导|主办|承办|协办|负责)', line
+                ):
+                    d['title'] = line[:160]
+                    break
+
+        # 分类/维度
+        cat = detect_category(cleaned)
+        if cat == 'academic':
+            d['dimension'] = 'academic'
+            if any(kw in cleaned for kw in ['竞赛', '大赛', '挑战杯', '互联网+', '蓝桥杯', '电子设计', '数学建模', '智能汽车', '计算机设计']):
+                d['category'] = '学科竞赛'
+            elif any(kw in cleaned for kw in ['创新', '创业', '大创', '立项', '攀登计划']):
+                d['category'] = '创新创业'
+            elif any(kw in cleaned for kw in ['证书', '考试', 'CET', '计算机等级', '普通话', '四级', '六级']):
+                d['category'] = '证书考试'
+            else:
+                d['category'] = '学科竞赛'
+        elif cat == 'sports':
+            d['dimension'] = 'sports'
+        elif cat == 'moral':
+            d['dimension'] = 'moral'
+            if any(kw in cleaned for kw in ['志愿', '服务', '劳动', '义务', '献血', '三下乡']):
+                d['category'] = '志愿服务'
+
+        d['level'] = detect_level(cleaned) or ''
+
+        # 主办方
+        for pat in [r'(?:主办|承办|协办|组织)[:：\s]*([^\n]{2,60})',
+                    r'(?:主办单位|承办单位|组织单位)[:：\s]*([^\n]{2,60})']:
+            m = re.search(pat, cleaned)
+            if m:
+                org = m[1].strip()
+                if len(org) >= 3:
+                    d['organizer'] = org
+                break
+
+        # 地点
+        for pat in [r'(?:地点|地址|教室|报告厅|线上|腾讯会议|会议室|场地)[:：\s]*([^\n]{2,50})']:
+            m = re.search(pat, cleaned)
+            if m:
+                loc = m[1].strip()
+                if len(loc) >= 2:
+                    d['location'] = loc
+                break
+
+        # 日期
+        range_m = re.search(rf'({DATE_ATOM})\s*[-~至到—]\s*({DATE_ATOM})', cleaned)
+        if range_m:
+            d['start_time'], d['deadline'] = range_m[1].strip(), range_m[2].strip()
+        if not d['deadline']:
+            for kw in ['报名截止', '截止日期', '截止时间', '截止', '报名时间',
+                       '活动时间', '比赛时间', '举办时间', '大赛时间']:
+                m = re.search(rf'{kw}[:：\s]*({DATE_ATOM})', cleaned)
+                if m:
+                    d['deadline'] = m[1].strip()
+                    break
+            if not d['deadline']:
+                m = re.search(rf'(?:时间|日期)[:：\s]*({DATE_ATOM})', cleaned)
+                if m:
+                    d['deadline'] = m[1].strip()
+        if not d['start_time']:
+            for kw in ['报名开始', '开始日期', '开始时间', '启动时间']:
+                m = re.search(rf'{kw}[:：\s]*({DATE_ATOM})', cleaned)
+                if m:
+                    d['start_time'] = m[1].strip()
+                    break
+        # Fallback: any date found
+        if not d['start_time'] and not d['deadline']:
+            m = re.search(DATE_ATOM, cleaned)
+            if m:
+                d['deadline'] = m[0].strip()
+
+        # 适合月份
+        sm = re.search(r'(\d{1,2})\s*[-~至到]\s*(\d{1,2})\s*月', cleaned)
+        if sm:
+            d['season_months'] = f'{sm[1]}-{sm[2]}月'
+
+        # credit_hint: 只有文字明确提到分数才填
+        for pat in [
+            r'(可加\s*\d+\s*分[^\n]{0,40})',
+            r'(加\s*\d+\s*分[^\n]{0,30})',
+            r'(综测[^\n]{0,20}加[^\n]{0,20}分[^\n]{0,30})',
+            r'(计入综测[^\n]{0,40})',
+        ]:
+            cm = re.search(pat, cleaned)
+            if cm:
+                d['credit_hint'] = cm[1].strip()[:100]
+                break
+
+        return d
+
+    result = _re_extract()
+
+    # ══════════════════════════════════════
+    # GLM-5 增强: 提取LLM擅长的所有文本字段
+    # 不碰 credit_hint / rule_ref（防编造）
+    # ══════════════════════════════════════
+    if _get_llm():
+        try:
+            from custom_llm import chat
+            prompt = f"""你是高校活动通知解析助手。从下方通知原文中提取以下字段，只返回纯JSON对象。
+
+【规则】
+- 有明确信息→填入；完全未提及→写"待通知"；真正不确定→写"视情况而定"
+- 不要编造、推测、补全。只在原文能找到依据时才填入具体值
+- 日期原样提取通知中的格式
+
+【字段】
+- title: 活动全称(从正文第一段或标题提取,如"第十五届蓝桥杯全国软件和信息技术专业人才大赛")
+- category: 活动通知/学科竞赛/创新创业/志愿服务/证书考试
+- dimension: moral/academic/sports
+- level: 国家级/省级/校级/院级/班级
+- organizer: 主办单位名称
+- location: 地点或"线上"
+- start_time: 起始日期(如"2024年3月1日")
+- deadline: 截止日期(如"2024年5月30日")
+- description: 活动内容摘要200字内
+- season_months: 适合参赛月份如"3-5月"
+
+通知原文:
+{cleaned[:4000]}"""
+
+            resp = chat(messages=[{'role': 'user', 'content': prompt}], temperature=0.1)
+            content = resp.content
+            if content:
+                jm = re.search(r'\{[\s\S]*\}', content)
+                if jm:
+                    parsed = json.loads(jm.group(0))
+                    llm_fields = ['title', 'category', 'dimension', 'level',
+                                  'organizer', 'location', 'start_time', 'deadline',
+                                  'description', 'season_months']
+                    for key in llm_fields:
+                        val = parsed.get(key, '')
+                        if not val or not isinstance(val, str) or not val.strip():
+                            continue
+                        v = val.strip()
+                        if v in ('无', '暂无', 'N/A', 'null', 'None', '""', '未知', '不详'):
+                            continue
+                        # LLM 结果覆盖正则（LLM更准）
+                        result[key] = v
+                    result['ai_enhanced'] = True
+        except Exception:
+            pass
+
+    # ══════════════════════════════════════
+    # 后处理
+    # ══════════════════════════════════════
+
+    # 日期LLM可能漏掉→正则兜底
+    if not result.get('start_time') and not result.get('deadline'):
+        m = re.search(DATE_ATOM, cleaned)
+        if m:
+            result['deadline'] = m[0].strip()
+
+    # credit_hint 最后防线: 文字没有分数信息就清空→"视情况而定"
+    if result.get('credit_hint') and not re.search(r'\d+\s*分', cleaned):
+        result['credit_hint'] = ''
+    if not result.get('credit_hint'):
+        result['credit_hint'] = '视情况而定'
+
+    # 必需字段空→"待通知"
+    for k in ['location', 'start_time', 'deadline', 'season_months']:
+        if not result.get(k):
+            result[k] = '待通知'
+
+    # level 空→"待定"
+    if not result.get('level'):
+        result['level'] = '待定'
+
+    return result
 
 
 def compute_file_hash(file_path: str) -> str:

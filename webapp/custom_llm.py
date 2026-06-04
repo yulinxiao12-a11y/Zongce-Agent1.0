@@ -48,7 +48,7 @@ def _chat_requests(messages, tools=None, temperature=0.1):
 
     resp = requests.post(
         f"{config.LLM_BASE_URL.rstrip('/')}/chat/completions",
-        headers=headers, json=payload, timeout=60
+        headers=headers, json=payload, timeout=120
     )
     if resp.status_code != 200:
         raise Exception(f"LLM API error {resp.status_code}: {resp.text[:300]}")

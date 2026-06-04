@@ -399,6 +399,7 @@ const publishScanStatus = ref('')
 const aiExpanded = ref(true)
 const aiParsing = ref(false)
 const publishImages = ref<Array<{ name: string; url: string; localUrl: string }>>([])
+const publishAttachments = ref<Array<{ name: string; url: string; localUrl: string }>>([])
 const publishQr = ref<{ name: string; url: string; localUrl: string } | null>(null)
 const publishDragOver = ref(false)
 const ruleUpload = reactive({ version: '2024-07-12-electronic-info-v1', notes: '' })
@@ -1487,12 +1488,12 @@ async function gradeModalOcrAnalyze() {
     gradeModalOcrResults.value = allCourses
     gradeModalOcrDone.value = true
     if (allCourses.length) {
-      ElMessage.success(`OCR识别到 ${allCourses.length} 门课程，请勾选确认后加入列表`)
+      ElMessage.success(`AI识别到 ${allCourses.length} 门课程，请勾选确认后加入列表`)
     } else {
       ElMessage.warning('未能从图片中识别出课程信息，请尝试手动添加')
     }
   } catch (error) {
-    ElMessage.error(`OCR失败：${(error as Error).message}`)
+    ElMessage.error(`AI识别失败：${(error as Error).message}`)
   } finally {
     gradeModalOcrLoading.value = false
   }
@@ -1827,6 +1828,35 @@ function removePublishQr() {
   publishForm.group_qr_url = ''
 }
 
+async function uploadPublishAttachmentFile(file: File) {
+  const form = new FormData()
+  form.append('files', file)
+  const result = await api<{ files?: Array<{ original_filename?: string; view_url?: string; file_path?: string }> }>('/upload', { method: 'POST', body: form })
+  const uploaded = result.files?.[0]
+  const item = {
+    name: uploaded?.original_filename || file.name,
+    url: uploaded?.view_url || (uploaded?.file_path ? `/api/uploads/${uploaded.file_path}` : ''),
+    localUrl: URL.createObjectURL(file),
+  }
+  publishAttachments.value.push(item)
+}
+
+async function handlePublishAttachmentSelect(event: Event) {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files || [])
+  for (const file of files) {
+    await uploadPublishAttachmentFile(file)
+  }
+  input.value = ''
+  ElMessage.success(`已上传 ${files.length} 个附件`)
+}
+
+function removePublishAttachment(index: number) {
+  const item = publishAttachments.value[index]
+  if (item?.localUrl) URL.revokeObjectURL(item.localUrl)
+  publishAttachments.value.splice(index, 1)
+}
+
 function onPublishDragOver(event: DragEvent) {
   event.preventDefault()
   publishDragOver.value = true
@@ -2014,33 +2044,32 @@ async function publishAiScan() {
     const fileIds = ((uploadResult as any).files || []).map((f: any) => f.id).filter(Boolean)
     if (!fileIds.length) { ElMessage.error('文件上传失败'); return }
 
-    // AI analyze
-    publishScanStatus.value = '🔍 AI正在扫描识别文字...'
-    const analysis = await api<{ results: Array<{ extracted_text: string; extracted_text_full?: string; filename: string }> }>('/analyze', {
+    // AI structured extraction
+    publishScanStatus.value = '🤖 AI 正在理解文件内容...'
+    const parsed = await api<Record<string, any>>('/admin/activities/ai-parse-file', {
       method: 'POST',
-      body: JSON.stringify({ uploaded_file_ids: fileIds, keyword: '' }),
+      body: JSON.stringify({ uploaded_file_ids: fileIds }),
     })
-    const results = (analysis as any).results || []
-    const allText = results.map((r: any) => r.extracted_text_full || r.extracted_text || '').filter(Boolean).join('\n\n')
-    if (!allText.trim()) { ElMessage.warning('未能从文件中提取到有效文字'); return }
+    if ((parsed as any).error) { ElMessage.warning((parsed as any).error); return }
 
-    // Fill form
-    const titleGuess = allText.split(/[\n\r]+/).find((l: string) => l.length > 6 && l.length < 100) || publishScanFiles.value[0]?.name?.replace(/\.[^.]+$/, '') || ''
-    publishForm.title = titleGuess.slice(0, 160)
-    publishForm.description = allText.slice(0, 2000)
+    aiParsed.value = parsed
+    Object.assign(publishForm, {
+      title: (parsed as any).title || publishForm.title,
+      category: (parsed as any).category || publishForm.category,
+      dimension: (parsed as any).dimension || publishForm.dimension,
+      organizer: (parsed as any).organizer || publishForm.organizer,
+      location: (parsed as any).location || publishForm.location,
+      start_time: (parsed as any).start_time || publishForm.start_time,
+      deadline: (parsed as any).deadline || publishForm.deadline,
+      credit_hint: (parsed as any).credit_hint || publishForm.credit_hint,
+      rule_ref: (parsed as any).rule_ref || publishForm.rule_ref,
+      description: (parsed as any).description || publishForm.description,
+      season_months: (parsed as any).season_months || publishForm.season_months,
+    })
 
-    // Date detection
-    const dm = allText.match(/(20\d{2}[年\-\/\.]\d{1,2}[月\-\/\.]\d{1,2}[日号])/)
-    if (dm) publishForm.deadline = dm[1]
-
-    // Location detection
-    const lm = allText.match(/(?:地点|地址|教室|报告厅|线上)[：:]\s*([^\n]{3,40})/)
-    if (lm) publishForm.location = lm[1]
-
-    aiParsed.value = { title: publishForm.title, description: publishForm.description, autoFilled: true }
-    publishScanStatus.value = `✅ 已扫描 ${results.length} 个文件并填充，请核对 `
+    publishScanStatus.value = `✅ 已扫描并填充 ${Object.keys(parsed as any).filter(k => (parsed as any)[k]).length} 个字段，请核对`
     publishScanFiles.value = []
-    ElMessage.success('AI扫描完成，请核对表单信息')
+    ElMessage.success('AI 扫描完成，请核对表单信息')
   } catch (error) {
     ElMessage.error(`AI扫描失败：${(error as Error).message}`)
   } finally {
@@ -2062,9 +2091,14 @@ async function runAiParse() {
       title: parsed.title || publishForm.title,
       category: parsed.category || publishForm.category,
       dimension: parsed.dimension || publishForm.dimension,
+      organizer: parsed.organizer || publishForm.organizer,
       location: parsed.location || publishForm.location,
+      start_time: parsed.start_time || publishForm.start_time,
       deadline: parsed.deadline || publishForm.deadline,
+      credit_hint: parsed.credit_hint || publishForm.credit_hint,
+      rule_ref: parsed.rule_ref || publishForm.rule_ref,
       description: parsed.description || aiNoticeText.value,
+      season_months: parsed.season_months || publishForm.season_months,
     })
     aiExpanded.value = false
     ElMessage.success('解析完成，请核对信息')
@@ -2091,7 +2125,7 @@ async function publishOpportunity() {
     ...publishForm,
     requirements: publishForm.requirementsText.split('\n').map(item => item.trim()).filter(Boolean),
     tags: publishForm.tagsText.split('\n').map(item => item.trim()).filter(Boolean),
-    attachments: [],
+    attachments: publishAttachments.value.map(item => ({ name: item.name, url: item.url })),
     images: publishImages.value.map(item => item.url),
     group_qr_url: publishQr.value?.url || publishForm.group_qr_url,
     roi_score: 3.8,
@@ -2117,6 +2151,8 @@ async function publishOpportunity() {
   aiParsed.value = null
   publishImages.value.forEach(item => URL.revokeObjectURL(item.localUrl))
   publishImages.value = []
+  publishAttachments.value.forEach(item => URL.revokeObjectURL(item.localUrl))
+  publishAttachments.value = []
   removePublishQr()
   await loadAll()
 }
@@ -3645,6 +3681,23 @@ onMounted(async () => {
                   <p class="image-hint">用于活动详情中展示加群资料，不作为审核依据。</p>
                 </div>
 
+                <div class="form-row">
+                  <label class="form-label">附件资料 <span class="optional">（选填）</span></label>
+                  <div v-if="publishAttachments.length" class="cert-file-list">
+                    <div v-for="(f, i) in publishAttachments" :key="`att-${f.name}-${i}`" class="cert-file-item">
+                      <b>{{ materialFileIcon(f.name) }}</b>
+                      <span>{{ f.name }}</span>
+                      <button @click="removePublishAttachment(i)">x</button>
+                    </div>
+                  </div>
+                  <label class="qrcode-add" style="margin-top:8px">
+                    <input type="file" multiple accept=".jpg,.jpeg,.png,.bmp,.webp,.gif,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip" class="hidden-input" @change="handlePublishAttachmentSelect" />
+                    <span class="qr-mark">📎</span>
+                    <span>上传附件（图片/PDF/Word/Excel等）</span>
+                  </label>
+                  <p class="image-hint">赛事通知原文、报名指南、细则文件等相关资料。</p>
+                </div>
+
                 <div class="submit-buttons">
                   <button class="btn-outline" @click="savePublishDraft">存为草稿</button>
                   <button class="btn-primary" @click="publishOpportunity">直接发布</button>
@@ -4067,7 +4120,7 @@ onMounted(async () => {
             @dragover.prevent @drop.prevent="(e) => { e.preventDefault(); const dt = e.dataTransfer; if (dt?.files) handleGradeModalFileSelect({ target: { files: dt.files, value: '' } } as any) }">
             <input type="file" multiple accept=".jpg,.jpeg,.png,.bmp,.webp" style="display:none;" @change="handleGradeModalFileSelect" />
             <strong>📎 点击或拖拽成绩单截图</strong>
-            <span>支持 JPG、PNG 格式，将自动 OCR 识别课程和成绩</span>
+            <span>支持 JPG、PNG 格式，将自动 AI 识别课程和成绩</span>
           </label>
           <div v-if="gradeModalUploadFiles.length" class="cert-file-list">
             <div v-for="(f, i) in gradeModalUploadFiles" :key="i" class="cert-file-item">
@@ -4080,21 +4133,20 @@ onMounted(async () => {
           <button v-if="gradeModalUploadFiles.length && !gradeModalOcrDone"
             class="cert-ai-sm-btn" :disabled="gradeModalOcrLoading"
             @click="gradeModalOcrAnalyze" style="margin-top:8px;">
-            <span v-if="gradeModalOcrLoading">⏳ OCR识别中...</span>
-            <span v-else>🤖 OCR识别</span>
+            <span v-if="gradeModalOcrLoading">⏳ AI识别中...</span>
+            <span v-else>🤖 AI识别</span>
           </button>
         </div>
 
         <!-- OCR识别结果 -->
         <div v-if="gradeModalOcrDone && gradeModalOcrResults.length" class="grade-ocr-results">
-          <h4>OCR识别结果 <span class="grade-course-count">({{ gradeModalOcrResults.length }} 门)</span></h4>
+          <h4>AI识别结果 <span class="grade-course-count">({{ gradeModalOcrResults.length }} 门)</span></h4>
           <div v-for="(ocr, i) in gradeModalOcrResults" :key="i" class="grade-ocr-row">
             <el-checkbox v-model="ocr.selected" />
             <span class="gor-name">{{ ocr.course_name }}</span>
             <span class="gor-grade">{{ ocr.grade }}分</span>
             <span class="gor-credit">{{ ocr.credits }}学分</span>
             <span class="gor-type">{{ ocr.course_type }}</span>
-            <span :class="['gor-conf', ocr.confidence >= 0.8 ? 'text-green' : ocr.confidence >= 0.6 ? 'text-amber' : 'text-red']">置信度 {{ Math.round(ocr.confidence * 100) }}%</span>
           </div>
           <button class="btn-ghost" @click="addOcrCoursesToList" style="margin-top:8px;">将选中课程加入列表</button>
         </div>

@@ -8,28 +8,32 @@
     </div>
 
     <div class="card"><div class="card-body" style="padding:0;"><div class="table-wrap"><table class="admin-table">
-        <thead><tr><th>ID</th><th>标题</th><th>级别</th><th>分类</th><th>日期</th><th>状态</th><th>关联加分</th><th>操作</th></tr></thead>
-        <tbody id="activitiesBody"><tr><td colspan="8"><div class="spinner"></div></td></tr></tbody>
+        <thead><tr><th>ID</th><th>标题</th><th>级别</th><th>分类</th><th>日期</th><th>状态</th><th>关联加分</th><th colspan="2">操作</th></tr></thead>
+        <tbody id="activitiesBody"><tr><td colspan="9"><div class="spinner"></div></td></tr></tbody>
     </table></div></div></div>
 </div>
 
 <div class="modal-overlay" id="actModal" style="display:none;">
-    <div class="modal-box" style="max-width:600px;" id="actModalContent"></div>
+    <div class="modal-box" style="max-width:680px;max-height:90vh;overflow-y:auto;" id="actModalContent"></div>
 </div>
 {% endblock %}
 {% block scripts %}
 <script>
 const STATUS_LABELS = {'报名中':'badge-academic','进行中':'status-auto_approved','即将开始':'status-pending','已结束':'status-rejected'};
+const ATTACH_ICONS = {pdf:'PDF',doc:'DOC',docx:'DOCX',xls:'XLS',xlsx:'XLSX',ppt:'PPT',pptx:'PPTX',txt:'TXT',zip:'ZIP'};
 
 async function loadActivities() {
     const resp = await fetch('/api/admin/activities');
     const data = await resp.json();
     const acts = data.activities;
     if (!acts.length) {
-        document.getElementById('activitiesBody').innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-muted);">暂无活动</td></tr>';
+        document.getElementById('activitiesBody').innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--text-muted);">暂无活动</td></tr>';
         return;
     }
-    document.getElementById('activitiesBody').innerHTML = acts.map(a => `
+    document.getElementById('activitiesBody').innerHTML = acts.map(a => {
+        const attCount = (a.attachments && a.attachments.length) || 0;
+        const attBadge = attCount ? `<span style="font-size:10px;background:#e2e8f0;color:#475569;padding:1px 6px;border-radius:10px;" title="${attCount}个附件">📎${attCount}</span>` : '';
+        return `
         <tr>
             <td><code>${escHtml(a.id)}</code></td>
             <td><strong>${escHtml(a.title)}</strong></td>
@@ -37,17 +41,38 @@ async function loadActivities() {
             <td>${escHtml(a.category)}</td>
             <td>${escHtml(a.date)}</td>
             <td><span class="badge ${STATUS_LABELS[a.status]||'badge-college'}">${escHtml(a.status)}</span></td>
-            <td style="font-size:12px;">${escHtml(a.related_score)}</td>
+            <td style="font-size:12px;">${escHtml(a.related_score||'')}</td>
+            <td>${attBadge}</td>
             <td><div class="action-btns">
                 <button class="btn btn-outline btn-sm" onclick="editActivity('${a.id}')"><i class="fas fa-edit"></i></button>
                 <button class="btn btn-outline btn-sm" onclick="deleteActivity('${a.id}')" style="color:var(--danger);"><i class="fas fa-trash"></i></button>
             </div></td>
-        </tr>`).join('');
+        </tr>`;
+    }).join('');
 }
 
-function openAddActivity() {
-    document.getElementById('actModalContent').innerHTML = `
-        <h3>发布新活动</h3>
+function _formHTML(isEdit, a) {
+    const v = (key, def) => isEdit ? escHtml(a[key]||def) : def;
+    const sel = (key, val) => v(key)===val ? 'selected' : '';
+    const atts = isEdit && a.attachments && a.attachments.length
+        ? `<div style="margin-top:4px;">${a.attachments.map(t=>`<span style="font-size:10px;background:#e2e8f0;padding:2px 6px;border-radius:4px;margin-right:4px;">📎 ${escHtml(t.name||'附件')}</span>`).join('')}</div>`
+        : '';
+    const attSection = `
+        <div class="form-group">
+            <label>📎 附件资料 <span style="color:var(--text-muted);font-size:11px;">（选填）</span></label>
+            <div style="margin-bottom:6px;" id="attachList">${atts}</div>
+            <div id="attachDropZone" style="border:1.5px dashed var(--border);border-radius:8px;padding:10px;text-align:center;cursor:pointer;background:#fff;"
+                onclick="this.querySelector('input').click()"
+                ondragover="event.preventDefault();this.style.borderColor='var(--primary)'"
+                ondragleave="this.style.borderColor='var(--border)'"
+                ondrop="handleAttachDrop(event)">
+                <input type="file" multiple accept=".jpg,.jpeg,.png,.bmp,.webp,.gif,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip" style="display:none;" onchange="handleAttachFiles(this.files)">
+                <span style="font-size:12px;color:#64748b;">点击或拖拽上传（图片/PDF/Word/Excel等）</span>
+            </div>
+            <p style="font-size:11px;color:#94a3b8;margin:4px 0 0;">赛事通知原文、报名指南、细则文件等相关资料。</p>
+        </div>`;
+    return `
+        <h3>${isEdit?'编辑活动':'发布新活动'}</h3>
         <div style="background:var(--primary-light);border-radius:8px;padding:12px;margin-bottom:14px;">
             <p style="font-size:12px;color:var(--text-muted);margin:0 0 8px;">上传通知截图/PDF/Word，AI 自动扫描并填充表单</p>
             <div style="margin-bottom:8px;">
@@ -67,43 +92,47 @@ function openAddActivity() {
                 <span id="scanStatus" style="font-size:11px;color:var(--text-muted);"></span>
             </div>
         </div>
-        <div class="form-group"><label>活动标题</label><input type="text" id="actTitle" required></div>
+        <div class="form-group"><label>活动标题</label><input type="text" id="actTitle" value="${v('title','')}" required></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-            <div class="form-group"><label>级别</label><select id="actLevel"><option>院级</option><option>校级</option><option>省级</option><option>国家级</option></select></div>
-            <div class="form-group"><label>分类</label><select id="actCat"><option>院级活动</option><option>社会实践</option><option>志愿服务</option><option>文体活动</option><option>学术讲座</option><option>其他</option></select></div>
-            <div class="form-group"><label>日期</label><input type="date" id="actDate"></div>
-            <div class="form-group"><label>状态</label><select id="actStatus"><option>即将开始</option><option>报名中</option><option>进行中</option><option>已结束</option></select></div>
+            <div class="form-group"><label>级别</label><select id="actLevel">${['院级','校级','省级','国家级'].map(l=>`<option ${sel('level',l)}>${l}</option>`).join('')}</select></div>
+            <div class="form-group"><label>分类</label><select id="actCat">${['院级活动','学科竞赛','社会实践','志愿服务','文体活动','学术讲座','创新创业','证书考试','其他'].map(c=>`<option ${sel('category',c)}>${c}</option>`).join('')}</select></div>
+            <div class="form-group"><label>开始时间</label><input type="text" id="actStartTime" value="${v('start_time','')}" placeholder="2025-03-01 或 3月1日"></div>
+            <div class="form-group"><label>截止日期</label><input type="text" id="actDeadline" value="${v('deadline',v('date',''))}" placeholder="2025-05-30"></div>
+            <div class="form-group"><label>状态</label><select id="actStatus">${['即将开始','报名中','进行中','已结束'].map(s=>`<option ${sel('status',s)}>${s}</option>`).join('')}</select></div>
+            <div class="form-group"><label>地点</label><input type="text" id="actLocation" value="${v('location','')}" placeholder="教室、报告厅或线上"></div>
         </div>
-        <div class="form-group"><label>主办单位</label><input type="text" id="actOrganizer"></div>
-        <div class="form-group"><label>活动描述</label><textarea id="actDesc" style="width:100%;min-height:60px;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;"></textarea></div>
-        <div class="form-group"><label>关联综测加分</label><input type="text" id="actScore" placeholder="如：品德+1-3分"></div>
-        <div class="modal-actions"><button class="btn btn-outline btn-sm" onclick="closeModal()">取消</button><button class="btn btn-primary btn-sm" onclick="saveActivity()"><i class="fas fa-save"></i> 发布</button></div>`;
+        <div class="form-group"><label>主办单位</label><input type="text" id="actOrganizer" value="${v('organizer','')}"></div>
+        <div class="form-group"><label>活动描述</label><textarea id="actDesc" style="width:100%;min-height:60px;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;">${v('description','')}</textarea></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div class="form-group"><label>官网/来源链接</label><input type="text" id="actOfficialUrl" value="${v('official_url','')}" placeholder="https://..."></div>
+            <div class="form-group"><label>报名链接</label><input type="text" id="actRegUrl" value="${v('registration_url','')}" placeholder="https://..."></div>
+        </div>
+        <div class="form-group"><label>关联综测加分</label><input type="text" id="actScore" value="${v('related_score','')}" placeholder="如：品德+1-3分"></div>
+        ${attSection}
+        <div class="modal-actions"><button class="btn btn-outline btn-sm" onclick="closeModal()">取消</button><button class="btn btn-primary btn-sm" onclick="${isEdit?'updateActivity(\''+a.id+'\')':'saveActivity()'}"><i class="fas fa-save"></i> ${isEdit?'保存':'发布'}</button></div>`;
+}
+
+function openAddActivity() {
+    document.getElementById('actModalContent').innerHTML = _formHTML(false, {});
     document.getElementById('actModal').style.display = 'flex';
     window._publishFiles = [];
     window._publishFileIds = [];
+    window._attachFiles = [];
 }
 
 function editActivity(actId) {
     fetch('/api/admin/activities').then(r=>r.json()).then(data => {
         const a = data.activities.find(x => x.id === actId);
         if (!a) return;
-        document.getElementById('actModalContent').innerHTML = `
-            <h3>编辑活动</h3>
-            <div class="form-group"><label>活动标题</label><input type="text" id="actTitle" value="${escHtml(a.title)}" required></div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-                <div class="form-group"><label>级别</label><select id="actLevel">${['院级','校级','省级','国家级'].map(l=>`<option ${a.level===l?'selected':''}>${l}</option>`).join('')}</select></div>
-                <div class="form-group"><label>分类</label><select id="actCat">${['院级活动','社会实践','志愿服务','文体活动','学术讲座','其他'].map(c=>`<option ${a.category===c?'selected':''}>${c}</option>`).join('')}</select></div>
-                <div class="form-group"><label>日期</label><input type="date" id="actDate" value="${a.date}"></div>
-                <div class="form-group"><label>状态</label><select id="actStatus">${['即将开始','报名中','进行中','已结束'].map(s=>`<option ${a.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
-            </div>
-            <div class="form-group"><label>主办单位</label><input type="text" id="actOrganizer" value="${escHtml(a.organizer||'')}"></div>
-            <div class="form-group"><label>活动描述</label><textarea id="actDesc" style="width:100%;min-height:60px;padding:8px;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;">${escHtml(a.description||'')}</textarea></div>
-            <div class="form-group"><label>关联综测加分</label><input type="text" id="actScore" value="${escHtml(a.related_score||'')}"></div>
-            <div class="modal-actions"><button class="btn btn-outline btn-sm" onclick="closeModal()">取消</button><button class="btn btn-primary btn-sm" onclick="updateActivity('${actId}')"><i class="fas fa-save"></i> 保存</button></div>`;
+        document.getElementById('actModalContent').innerHTML = _formHTML(true, a);
         document.getElementById('actModal').style.display = 'flex';
+        window._publishFiles = [];
+        window._publishFileIds = [];
+        window._attachFiles = [];
     });
 }
 
+// ========== AI scan files ==========
 function handlePublishFiles(files) {
     files = Array.from(files).filter(f => {
         const ext = f.name.split('.').pop().toLowerCase();
@@ -115,33 +144,26 @@ function handlePublishFiles(files) {
     window._publishFiles = [...existing, ...added];
     renderPublishFiles();
 }
-
 function handlePublishDrop(e) {
     e.preventDefault();
     e.target.style.borderColor = 'var(--border)';
     if (e.dataTransfer && e.dataTransfer.files) handlePublishFiles(e.dataTransfer.files);
 }
-
-function removePublishFile(idx) {
-    window._publishFiles.splice(idx, 1);
-    renderPublishFiles();
-}
-
+function removePublishFile(idx) { window._publishFiles.splice(idx,1); renderPublishFiles(); }
 function renderPublishFiles() {
     const el = document.getElementById('publishFileList');
     const files = window._publishFiles || [];
     if (!el) return;
-    if (!files.length) { el.style.display = 'none'; return; }
-    el.style.display = 'flex';
-    el.innerHTML = files.map((f, i) => {
+    if (!files.length) { el.style.display='none'; return; }
+    el.style.display='flex';
+    el.innerHTML = files.map((f,i) => {
         const ext = f.name.split('.').pop().toUpperCase();
         const kb = (f.size/1024).toFixed(1);
-        return '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#f1f5f9;border-radius:6px;font-size:12px;">'
-            + '<b style="font-size:10px;background:var(--primary);color:#fff;padding:2px 5px;border-radius:3px;">'+ext+'</b>'
-            + '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+escHtml(f.name)+'</span>'
-            + '<small style="color:var(--text-muted);">'+kb+' KB</small>'
-            + '<button onclick="removePublishFile('+i+')" style="border:0;background:none;color:var(--danger);cursor:pointer;font-size:14px;padding:0 4px;">x</button>'
-            + '</div>';
+        return `<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#f1f5f9;border-radius:6px;font-size:12px;">
+            <b style="font-size:10px;background:var(--primary);color:#fff;padding:2px 5px;border-radius:3px;">${ext}</b>
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(f.name)}</span>
+            <small style="color:var(--text-muted);">${kb} KB</small>
+            <button onclick="removePublishFile(${i})" style="border:0;background:none;color:var(--danger);cursor:pointer;font-size:14px;padding:0 4px;">x</button></div>`;
     }).join('');
 }
 
@@ -159,62 +181,112 @@ async function aiScanFiles() {
         if (!fileIds.length) { status.textContent = '上传失败'; return; }
         window._publishFileIds = fileIds;
 
-        status.textContent = '🔍 AI正在扫描识别文字...';
-        const analyzeResp = await fetch('/api/analyze', {
+        status.textContent = '🤖 AI 正在理解文件内容...';
+        const resp = await fetch('/api/admin/activities/ai-parse-file', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uploaded_file_ids: fileIds, keyword: '' })
+            body: JSON.stringify({ uploaded_file_ids: fileIds })
         });
-        const analyzeData = await analyzeResp.json();
-        const results = analyzeData.results || [];
-        const allText = results.map(r => r.extracted_text_full || r.extracted_text || '').filter(Boolean).join('\n\n');
+        const parsed = await resp.json();
+        if (parsed.error) { status.textContent = parsed.error; return; }
 
-        if (!allText.trim()) { status.textContent = '未能提取到文字，请尝试直接输入'; return; }
+        if (parsed.title) document.getElementById('actTitle').value = parsed.title;
+        if (parsed.category) document.getElementById('actCat').value = parsed.category;
+        if (parsed.level) document.getElementById('actLevel').value = parsed.level;
+        if (parsed.organizer) document.getElementById('actOrganizer').value = parsed.organizer;
+        if (parsed.location) document.getElementById('actLocation').value = parsed.location;
+        if (parsed.start_time) document.getElementById('actStartTime').value = parsed.start_time;
+        if (parsed.deadline) document.getElementById('actDeadline').value = parsed.deadline;
+        if (parsed.description) document.getElementById('actDesc').value = parsed.description;
+        if (parsed.official_url) document.getElementById('actOfficialUrl').value = parsed.official_url;
+        if (parsed.registration_url) document.getElementById('actRegUrl').value = parsed.registration_url;
+        if (parsed.credit_hint) document.getElementById('actScore').value = parsed.credit_hint;
 
-        // Fill form from extracted text
-        const lines = allText.split(/[\n\r]+/).filter(l => l.trim());
-        const titleGuess = lines.find(l => l.length > 6 && l.length < 100) || files[0].name.replace(/\.[^.]+$/, '');
-        if (titleGuess) document.getElementById('actTitle').value = titleGuess.slice(0, 200);
-        document.getElementById('actDesc').value = allText.slice(0, 2000);
-
-        // Try AI suggestion from extracted text
-        try {
-            const aiResp = await fetch('/api/admin/activities/ai-fill', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: titleGuess.slice(0, 60), description: allText.slice(0, 2000) })
-            });
-            const aiData = await aiResp.json();
-            if (aiData.category) document.getElementById('actCat').value = aiData.category==='academic'?'学术讲座':aiData.category==='moral'?'社会实践':'文体活动';
-            if (aiData.level) document.getElementById('actLevel').value = aiData.level;
-            if (aiData.section) document.getElementById('actOrganizer').value = aiData.section;
-            if (aiData.suggested_score) document.getElementById('actScore').value = '学业+'+aiData.suggested_score+'分';
-        } catch {}
-
-        // Date detection
-        const dm = allText.match(/(20\d{2}[年\-\/\.]\d{1,2}[月\-\/\.]\d{1,2}[日号])/);
-        if (dm) document.getElementById('actDate').value = dm[1].replace(/[年月]/g,'-').replace(/[日号]/g,'');
-
-        status.textContent = '✅ 已扫描 '+results.length+' 个文件并填充，请核对';
+        const filled = Object.keys(parsed).filter(k => parsed[k] && typeof parsed[k]==='string' && parsed[k].trim()).length;
+        status.textContent = `✅ 已扫描并填充 ${filled} 个字段，请核对`;
         window._publishFiles = [];
         renderPublishFiles();
     } catch(e) { status.textContent = '扫描失败：'+e.message; }
 }
 
+// ========== Attachment upload ==========
+function handleAttachFiles(files) {
+    files = Array.from(files).filter(f => {
+        const ext = f.name.split('.').pop().toLowerCase();
+        return ['jpg','jpeg','png','bmp','webp','gif','pdf','doc','docx','xls','xlsx','ppt','pptx','txt','zip'].includes(ext);
+    });
+    if (!files.length) return;
+    window._attachFiles = [...(window._attachFiles||[]), ...files];
+    renderAttachFiles();
+}
+function handleAttachDrop(e) {
+    e.preventDefault();
+    e.target.style.borderColor = 'var(--border)';
+    if (e.dataTransfer && e.dataTransfer.files) handleAttachFiles(e.dataTransfer.files);
+}
+function removeAttachFile(idx) { window._attachFiles.splice(idx,1); renderAttachFiles(); }
+function renderAttachFiles() {
+    const el = document.getElementById('attachList');
+    const files = window._attachFiles || [];
+    if (!el) return;
+    const existing = el.querySelectorAll('.attach-new').length;
+    el.innerHTML = el.innerHTML.replace(/<span class="attach-new"[^>]*><\/span>/g, '');
+    const newItems = files.map((f,i) => {
+        const ext = (f.name.split('.').pop()||'').toUpperCase();
+        const kb = (f.size/1024).toFixed(1);
+        return `<span class="attach-new" style="font-size:10px;background:#dbeafe;color:#1e40af;padding:2px 6px;border-radius:4px;margin-right:4px;display:inline-block;">📎 ${escHtml(f.name)} (${kb}KB) <button onclick="removeAttachFile(${i})" style="border:0;background:none;color:#ef4444;cursor:pointer;padding:0 2px;">x</button></span>`;
+    }).join('');
+    el.innerHTML += newItems;
+}
+
+async function uploadAttachFiles() {
+    const files = window._attachFiles || [];
+    if (!files.length) return [];
+    const results = [];
+    for (const f of files) {
+        const form = new FormData();
+        form.append('files', f);
+        try {
+            const resp = await fetch('/api/upload', { method: 'POST', body: form });
+            const data = await resp.json();
+            const uf = (data.files||[])[0];
+            if (uf) results.push({ name: uf.original_filename||f.name, url: uf.view_url||('/api/uploads/'+(uf.file_path||'')) });
+        } catch(e) { console.error('Upload failed:', f.name); }
+    }
+    return results;
+}
+
+// ========== Save / Update ==========
 async function saveActivity() {
-    const payload = { title:$('actTitle').value, level:$('actLevel').value, category:$('actCat').value, date:$('actDate').value, status:$('actStatus').value, organizer:$('actOrganizer').value, description:$('actDesc').value, related_score:$('actScore').value };
+    const atts = await uploadAttachFiles();
+    const payload = {
+        title:$('actTitle').value, level:$('actLevel').value, category:$('actCat').value,
+        start_time:$('actStartTime').value, deadline:$('actDeadline').value, date:$('actDeadline').value||$('actStartTime').value,
+        status:$('actStatus').value, organizer:$('actOrganizer').value, location:$('actLocation').value,
+        description:$('actDesc').value, related_score:$('actScore').value,
+        official_url:$('actOfficialUrl').value, registration_url:$('actRegUrl').value,
+        attachments: atts
+    };
     await fetch('/api/admin/activities', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     closeModal(); loadActivities(); showToast('活动已发布');
 }
 
 async function updateActivity(id) {
-    const payload = { title:$('actTitle').value, level:$('actLevel').value, category:$('actCat').value, date:$('actDate').value, status:$('actStatus').value, organizer:$('actOrganizer').value, description:$('actDesc').value, related_score:$('actScore').value };
+    const atts = await uploadAttachFiles();
+    const payload = {
+        title:$('actTitle').value, level:$('actLevel').value, category:$('actCat').value,
+        start_time:$('actStartTime').value, deadline:$('actDeadline').value, date:$('actDeadline').value||$('actStartTime').value,
+        status:$('actStatus').value, organizer:$('actOrganizer').value, location:$('actLocation').value,
+        description:$('actDesc').value, related_score:$('actScore').value,
+        official_url:$('actOfficialUrl').value, registration_url:$('actRegUrl').value,
+        attachments: atts
+    };
     await fetch('/api/admin/activities/' + id, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     closeModal(); loadActivities(); showToast('活动已更新');
 }
 
 async function deleteActivity(id) { if(!confirm('确定删除此活动吗？'))return; await fetch('/api/admin/activities/'+id,{method:'DELETE'}); loadActivities(); showToast('已删除'); }
-function closeModal() { document.getElementById('actModal').style.display = 'none'; }
+function closeModal() { document.getElementById('actModal').style.display='none'; }
 function $(id) { return document.getElementById(id); }
 function escHtml(s) { const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
 function showToast(msg) { const t=document.createElement('div'); t.className='toast'; t.textContent=msg; document.body.appendChild(t); setTimeout(()=>t.remove(),2500); }

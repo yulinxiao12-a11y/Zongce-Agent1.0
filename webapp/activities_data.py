@@ -29,6 +29,15 @@ def save_activities(activities):
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
         json.dump(activities, f, ensure_ascii=False, indent=2)
 
+ACTIVITY_FIELDS = [
+    'title', 'category', 'level', 'date', 'start_time', 'deadline',
+    'organizer', 'description', 'status', 'related_score', 'location',
+    'official_url', 'registration_url', 'contact_email', 'article_url',
+    'group_qr_url', 'images', 'attachments', 'season_months',
+    'credit_hint', 'rule_ref', 'requirements', 'tags',
+]
+
+
 def add_activity(data):
     activities = load_activities()
     new_id = 'ACT' + str(len(activities) + 1)
@@ -38,6 +47,8 @@ def add_activity(data):
         'category': data.get('category', '院级活动'),
         'level': data.get('level', '院级'),
         'date': data.get('date', ''),
+        'start_time': data.get('start_time', ''),
+        'deadline': data.get('deadline', ''),
         'organizer': data.get('organizer', ''),
         'description': data.get('description', ''),
         'status': data.get('status', '即将开始'),
@@ -45,17 +56,27 @@ def add_activity(data):
         'location': data.get('location', ''),
         'official_url': data.get('official_url', ''),
         'registration_url': data.get('registration_url', ''),
+        'contact_email': data.get('contact_email', ''),
+        'article_url': data.get('article_url', ''),
+        'group_qr_url': data.get('group_qr_url', ''),
         'images': data.get('images', []),
+        'attachments': data.get('attachments', []),
+        'season_months': data.get('season_months', ''),
+        'credit_hint': data.get('credit_hint', ''),
+        'rule_ref': data.get('rule_ref', ''),
+        'requirements': data.get('requirements', []),
+        'tags': data.get('tags', []),
     }
     activities.append(activity)
     save_activities(activities)
     return activity
 
+
 def update_activity(act_id, data):
     activities = load_activities()
     for a in activities:
         if a['id'] == act_id:
-            for key in ['title','category','level','date','organizer','description','status','related_score','location','official_url','registration_url','images']:
+            for key in ACTIVITY_FIELDS:
                 if key in data:
                     a[key] = data[key]
             save_activities(activities)
