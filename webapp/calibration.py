@@ -164,19 +164,19 @@ def pava_predict(raw_score: float, isotonic_model: list, raw_range: tuple = (0, 
 # 这些参数可以在收集足够管理端反馈后通过真实数据重新拟合
 DEFAULT_TEMPERATURE = 1.2
 
-# 默认校准曲线 — 极端值保持原样，中段适度降噪
+# 默认校准曲线 — 中低段适度降噪，中高段保持原值
+# 校准应反映"置信度与真实正确的映射"，不应无差别压分
 # 数据点: (raw_confidence, calibrated_target)
-# 基于文档四大场景 + 工业界校准最佳实践
 DEFAULT_ISOTONIC_POINTS = [
     (5,  0.08),   # 极低 → 保持低分
-    (15, 0.15),   # 低 (场景二)
+    (15, 0.15),   # 低
     (30, 0.28),   # 低-中
     (50, 0.48),   # 中
-    (65, 0.63),   # 中-高
-    (75, 0.74),   # 高
-    (85, 0.85),   # 高 (场景一区域)
-    (91, 0.91),   # 高 (场景一/三)
-    (95, 0.95),   # 极高 (直通阈值)
+    (65, 0.64),   # 中-高
+    (75, 0.75),   # 高 — 原 0.74，修正为 identity
+    (85, 0.85),   # 高 — identity，不做无意义压分
+    (91, 0.91),   # 高 — identity
+    (95, 0.95),   # 极高（直通阈值）
     (98, 0.98),   # 极高
 ]
 
@@ -336,6 +336,6 @@ def apply_calibration(match: dict) -> dict:
 
     # 重算 decision (可能因校准变化)
     final = calib['final']
-    match['decision'] = 'high' if final >= 95 else ('medium' if final >= 60 else 'low')
+    match['decision'] = 'high' if final >= 90 else ('medium' if final >= 65 else 'low')
 
     return match

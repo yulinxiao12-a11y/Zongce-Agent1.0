@@ -760,7 +760,7 @@ def match_catalog_items(text: str, catalog_items: list, filename: str = '',
             if len(s.get('reasons', [])) >= 2:
                 confidence = min(95, confidence + 5)
             s['confidence'] = min(95, confidence)
-            s['decision'] = 'high' if s['confidence'] >= 80 else ('medium' if s['confidence'] >= 40 else 'low')
+            s['decision'] = 'high' if s['confidence'] >= 90 else ('medium' if s['confidence'] >= 65 else 'low')
             s['reason'] = _generate_reason(s)
 
     return scores[:8]  # 返回更多结果
@@ -769,7 +769,7 @@ def _generate_reason(match: dict) -> str:
     reasons = match.get('reasons', [])
     reasons_text = '；'.join(reasons) if reasons else '综合文本特征匹配'
     conf = match['confidence']
-    verdict = '高度匹配，建议自动通过' if conf >= 80 else ('中度匹配，建议人工审核' if conf >= 40 else '低度匹配，证据不足')
+    verdict = '高度匹配，建议自动通过' if conf >= 90 else ('中度匹配，建议人工审核' if conf >= 65 else '低度匹配，证据不足')
     return f"[置信度{conf}%] {reasons_text}。{verdict}。"
 
 # ══════════════════════════════════════════
@@ -820,10 +820,10 @@ REQUIRED_MATERIALS = {
         'signals': [
             '参赛证明', '参与证明', '参赛', '参加', '参与者', '参赛者',
             '队员', '组员', '成员', '报名成功', '报名确认', '注册成功',
-            '录用', '录取', '志愿时长', '服务时长', '签到', '参与活动',
-            '入选', '入围', '参赛队', '团队', '项目成员',
+            '录用', '录取', '志愿时长', '志愿服务', '志愿', '服务时长', '签到', '参与活动',
+            '入选', '入围', '参赛队', '团队', '项目成员', '时长',
         ],
-        'boost_signals': ['证明', '参赛', '参与', '录用'],
+        'boost_signals': ['证明', '参赛', '参与', '录用', '志愿'],
     },
     '结果证明': {
         'weight': 1.2,
@@ -833,8 +833,9 @@ REQUIRED_MATERIALS = {
             '合格', '通过', '成绩', '得分', '颁发', '授予', '荣获',
             '获评', '评为', '被评为', '奖状', '结业证书', '毕业证',
             '名次', '第.*名', '称号', '先进个人', '优秀学生',
+            '聘书', '聘请', '担任',
         ],
-        'boost_signals': ['证书', '获奖', '奖', '等奖'],
+        'boost_signals': ['证书', '获奖', '奖', '等奖', '聘书'],
     },
     '官方来源证明': {
         'weight': 1.0,
@@ -913,24 +914,25 @@ def _check_material_completeness(text: str, filename: str = '',
     ratio = len(matched) / 5.0
     matched_count = len(matched)
 
-    # 评分映射
+    # 评分映射 — 单张图片 2-3/5 是正常的，不扣分
+    # 多图打包才能覆盖 4-5/5，完整性 cap 已在 _score_confidence 中通过加权融合处理
     if matched_count == 5:
-        score = 12
+        score = 10
         label = '材料完整性极高，五类必检材料齐全'
     elif matched_count == 4:
-        score = 8
+        score = 6
         label = f'材料较完整，4/5类已提供，缺: {",".join(missing)}'
     elif matched_count == 3:
-        score = 3
+        score = 2
         label = f'材料基本完整，3/5类已提供，缺: {",".join(missing)}'
     elif matched_count == 2:
-        score = -3
-        label = f'材料完整性不足，仅2/5类，缺: {",".join(missing)}'
+        score = 0  # 原是 -3，单图 2/5 是常态
+        label = f'材料较简单，2/5类，缺: {",".join(missing)}'
     elif matched_count == 1:
-        score = -8
+        score = -5  # 原是 -8
         label = f'材料严重不完整，仅1/5类，缺: {",".join(missing)}'
     else:
-        score = -15
+        score = -10  # 原是 -15
         label = '几乎无有效证明材料，五类必检材料全部缺失'
 
     return {
@@ -957,51 +959,94 @@ def _score_confidence(match: dict, extracted_text: str, filename: str = '',
     # ════════════════════════════════════════
     # 因素1: 材料证明力 — 是否为官方证明文件
     # ════════════════════════════════════════
-    authority_signals = ['证书', '证明', '聘书', '成绩单', '考试', '合格证', '等级证书',
+    # 正向加分制：有权威信号加分，无信号不扣（_strict_confidence_cap 已处理证据上限）
+    authority_signals = ['证书', '证明', '聘书', '成绩单', '成绩', '考试', '合格证', '等级证书',
                          '毕业证', '学位证', '资格证书', '执业证书', '结业证书', '获奖证书',
-                         '荣誉证书', '表彰', '通知书', '录用通知', '授权书', '登记证']
+                         '荣誉证书', '表彰', '通知书', '录用通知', '授权书', '登记证',
+                         '聘请', '担任', '任职']
     authority_count = sum(1 for s in authority_signals if s in text)
     if authority_count >= 2:
         adjustments.append(('材料权威性高', 10))
         reasons.append(f'含{authority_count}个官方文件信号')
     elif authority_count == 1:
         adjustments.append(('材料具权威性', 5))
-    elif authority_count == 0:
-        adjustments.append(('缺乏官方文件特征', -8))
-        reasons.append('未检测到"证书/证明/成绩单"等官方文件标识')
+    # 无信号时不扣分：LLM 已从 OCR 全文中判断，正则检测不到不代表不存在
 
     # ════════════════════════════════════════
     # 因素2: 成果完成度 — 是否已取得成果(而非过程文件)
     # ════════════════════════════════════════
+    # 正向加分制：获奖信号加分，无信号不扣。
+    # 志愿服务证明、职务聘书、参赛证明天然无获奖关键词，不应受罚。
     completion_signals = ['一等奖', '二等奖', '三等奖', '特等奖', '金奖', '银奖', '铜奖',
                           '冠军', '亚军', '季军', '合格', '通过', '授权', '授予', '颁发',
                           '获评', '评为', '被评为', '荣获', '授予', '得分', '成绩',
                           '取到', '获得', '获取', '颁发日期', '发证日期', '授予日期',
-                          '优秀', '先进', '标兵', '先进个人']
+                          '优秀', '先进', '标兵', '先进个人',
+                          '志愿时长', '服务时长', '累计时长', '志愿', '时长',
+                          '聘书', '聘请', '兹聘']
     completion_count = sum(1 for s in completion_signals if s in text)
     if completion_count >= 3:
         adjustments.append(('成果完成度高', 12))
         reasons.append(f'含{completion_count}个成果完成信号')
     elif completion_count >= 1:
         adjustments.append(('成果已完成', 6))
-    else:
-        adjustments.append(('未检测到成果完成信号', -5))
+    # 无信号时不扣分：参与证明/聘书等材料合法地不含获奖关键词
 
     # ════════════════════════════════════════
     # 因素3: 负面信号 — 未完成/申请中/备考中 = 重大扣分
     # ════════════════════════════════════════
-    negative_signals = {
-        '报名': -25, '申请中': -30, '备考': -25, '准备': -15,
-        '未通过': -35, '不合格': -35, '不及格': -35, '未参加': -30,
-        '弃考': -40, '缺考': -40, '挂科': -35, '补考': -25,
-        '落选': -30, '淘汰': -30, '暂未': -20, '待定': -15,
-        '等待': -10, '拟申报': -20, '草稿': -25, '样本': -30,
-        '模板': -30, '样例': -20,
+    # 为确保不误伤正常材料，区分两类信号：
+    #   A. 明确负面（无需上下文判断）
+    #   B. 需上下文排除（关键词在良性上下文中不算负面）
+    negative_signals_simple = {
+        '申请中': -30, '未通过': -35, '不合格': -35, '不及格': -35,
+        '未参加': -30, '弃考': -40, '缺考': -40, '挂科': -35, '补考': -25,
+        '落选': -30, '淘汰': -30, '暂未': -20,
+        '拟申报': -20, '草稿': -25,
     }
+    # 上下文排除表：关键词 → 紧跟的良性词（出现则不算负面）
+    _negative_context_exclusions = {
+        '报名': ['成功', '通过', '确认', '已报', '号', '编号', '费', '入口', '方式', '条件', '时间', '流程', '截止'],
+        '准备': ['充分', '就绪', '完毕', '完成', '工作', '材料', '好了'],
+        '备考': ['充分', '完成', '完毕', '结束'],
+        '样本': ['参考'],   # "样本仅供参考"
+        '模板': ['编号', '号'],  # "模板编号"
+        '等待': ['通知', '结果', '回复', '消息', '处理'],
+        '待定': ['审核', '结果', '中'],
+    }
+    negative_signals_contextual = {
+        '报名': -25, '准备': -15, '备考': -25,
+        '样本': -30, '模板': -30, '等待': -10, '待定': -15,
+    }
+
+    def _in_benign_context(text, keyword):
+        """检查关键词在文本中是否处于良性上下文（不应扣分）"""
+        exclusions = _negative_context_exclusions.get(keyword, [])
+        if not exclusions:
+            return False
+        idx = text.find(keyword)
+        if idx == -1:
+            return False
+        # 检查关键词后紧跟的 1-4 个字符
+        after = text[idx + len(keyword):idx + len(keyword) + 4]
+        for excl in exclusions:
+            if excl in after:
+                return True
+        # 检查关键词前 1-2 个字符（如 "已报名"）
+        before = text[max(0, idx - 2):idx]
+        for excl in exclusions:
+            if excl in before:
+                return True
+        return False
+
     neg_penalty = 0
     neg_hits = []
-    for signal, penalty in negative_signals.items():
+    for signal, penalty in negative_signals_simple.items():
         if signal in text:
+            neg_penalty += penalty
+            neg_hits.append(signal)
+    for signal, penalty in negative_signals_contextual.items():
+        if signal in text and not _in_benign_context(text, signal):
             neg_penalty += penalty
             neg_hits.append(signal)
     if neg_hits:
@@ -1011,6 +1056,7 @@ def _score_confidence(match: dict, extracted_text: str, filename: str = '',
     # ════════════════════════════════════════
     # 因素4: OCR / 文字提取质量
     # ════════════════════════════════════════
+    # 正向加分制：文字充足加分，文字少不扣（证书/APP截图天然文字少是正常的）
     text_len = len(text.replace('\n', '').replace(' ', ''))
     filename_has_signal = False
     if filename:
@@ -1020,23 +1066,21 @@ def _score_confidence(match: dict, extracted_text: str, filename: str = '',
             'exam', 'score', 'transcript', 'hcia', 'hcip', 'hcie', 'huawei', '华为'
         ])
     if text_len < 10:
-        if filename_has_signal:
-            adjustments.append(('OCR为空但文件名可用', -8))
-            reasons.append('OCR未提取到有效文字，已使用文件名/关键词辅助匹配')
-        else:
+        if not filename_has_signal:
             adjustments.append(('文字提取极差', -35))
             reasons.append('OCR几乎无有效文字，可能为空白/模糊图片')
-    elif text_len < 30:
-        adjustments.append(('文字提取较差', -15))
-        reasons.append(f'仅提取{text_len}字，信息量不足')
-    elif text_len < 60:
-        adjustments.append(('文字量偏低', -5))
+        # 文件名有信号且OCR空 → 仅轻微扣分（可能是纯图片证书）
+        elif filename_has_signal:
+            adjustments.append(('OCR为空但文件名可用', -8))
+            reasons.append('OCR未提取到有效文字，已使用文件名/关键词辅助匹配')
     elif text_len >= 200:
         adjustments.append(('文字信息充足', 5))
+    # 10-199 字是中位区间，不扣不加
 
     # ════════════════════════════════════════
     # 因素5: 学生身份匹配
     # ════════════════════════════════════════
+    # 正向加分制：检测到身份信息加分，检测不到不扣（大多数证书不含个人姓名）
     identity_matched = False
     if student_name and len(student_name) >= 2 and student_name in text:
         identity_matched = True
@@ -1046,8 +1090,7 @@ def _score_confidence(match: dict, extracted_text: str, filename: str = '',
         adjustments.append(('学号匹配', 5) if not identity_matched else ('', 3))
         if not identity_matched:
             reasons.append(f'材料含学号')
-    if student_name and not identity_matched and student_id and student_id not in text:
-        adjustments.append(('未检测到学生身份信息', -3))
+    # 无身份信息时不扣分：团队证书/电子证书/APP截图天然不含个人身份信息
 
     # ════════════════════════════════════════
     # 因素6: 颁发机构/公章
@@ -1056,7 +1099,8 @@ def _score_confidence(match: dict, extracted_text: str, filename: str = '',
                    '中国计算机', '全国计算机', '大学英语', '全国大学生',
                    '共青团', '教育部考试中心', '工业和信息化部', '国家知识产权局',
                    '知识产权局', '专利局', '版权局', '学校', '学院', '大学',
-                   '委员会', '协会', '学会', '组委会', '竞赛组委会']
+                   '委员会', '协会', '学会', '组委会', '竞赛组委会',
+                   '到梦空间', 'i志愿', '粤志愿', '易班', '第二课堂', '青志']
     org_count = sum(1 for s in org_signals if s in text)
     if org_count >= 2:
         adjustments.append(('有颁发机构信息', 6))
@@ -1109,14 +1153,21 @@ def _score_confidence(match: dict, extracted_text: str, filename: str = '',
     cap, cap_reasons = _strict_confidence_cap(match, extracted_text, filename, student_name, student_id)
     if cap_reasons:
         reasons.extend(cap_reasons)
-    # ── 材料完整性独立上限 ──
+    # ── 材料完整性独立上限（加权融合，非 min）──
+    # 单张图片不可能覆盖 5 类材料，完整度只占 20% 权重
     comp_ratio = completeness['ratio']
     if comp_ratio < 0.4:       # < 2/5 类材料
-        cap = min(cap, 60)
-        reasons.append(f'材料完整度仅{int(comp_ratio*100)}%，上限降至60%')
+        comp_cap = 72  # 单图 1-2/5 是常态，不过低压分
+        reasons.append(f'材料完整度仅{int(comp_ratio*100)}%')
     elif comp_ratio < 0.6:     # < 3/5 类材料
-        cap = min(cap, 75)
-        reasons.append(f'材料完整度仅{int(comp_ratio*100)}%，上限降至75%')
+        comp_cap = 85  # 2-3/5 对单图已属正常
+        reasons.append(f'材料完整度仅{int(comp_ratio*100)}%')
+    else:
+        comp_cap = None
+
+    if comp_cap is not None:
+        # 加权融合：完整性仅占 20% 权重（单图提交是常态）
+        cap = int(cap * 0.8 + comp_cap * 0.2)
     new_conf = max(5, min(98, new_conf, cap))
 
     # ── 风险等级与决策（文档标准：≥95%高置信直通） ──
@@ -1135,7 +1186,7 @@ def _score_confidence(match: dict, extracted_text: str, filename: str = '',
         # 降级: 仅用原始分数
         match['confidence_calibrated'] = False
     # 决策阈值按文档设计: ≥95%→high, ≥60%→medium, <60%→low
-    match['decision'] = 'high' if match['confidence'] >= 95 else ('medium' if match['confidence'] >= 60 else 'low')
+    match['decision'] = 'high' if match['confidence'] >= 90 else ('medium' if match['confidence'] >= 65 else 'low')
     match['risk_level'] = risk_level
 
     # 构建详细理由
@@ -1268,7 +1319,7 @@ def _extract_award_granularity(text: str) -> dict:
             break
     level_patterns = [
         ('\u56fd\u9645\u7ea7', ['\u56fd\u9645\u7ea7', '\u56fd\u9645', '\u5168\u7403']),
-        ('\u56fd\u5bb6\u7ea7', ['\u56fd\u5bb6\u7ea7', '\u5168\u56fd', '\u56fd\u8d5b', '\u6559\u80b2\u90e8', '\u56fd\u5bb6']),
+        ('\u56fd\u5bb6\u7ea7', ['\u56fd\u5bb6\u7ea7', '\u5168\u56fd', '\u56fd\u8d5b', '\u6559\u80b2\u90e8']),
         ('\u7701\u7ea7', ['\u7701\u7ea7', '\u7701\u8d5b', '\u8d5b\u533a', '\u5e7f\u4e1c\u7701', '\u5168\u7701', '\u7701\u90e8\u7ea7']),
         ('\u6821\u7ea7', ['\u6821\u7ea7', '\u6821\u8d5b', '\u5168\u6821', '\u5b66\u6821']),
         ('\u9662\u7ea7', ['\u9662\u7ea7', '\u9662\u8d5b', '\u5b66\u9662', '\u672c\u9662']),
@@ -1300,22 +1351,27 @@ def _extract_award_granularity(text: str) -> dict:
 
 def _strict_confidence_cap(match: dict, text: str, filename: str,
                            student_name: str = '', student_id: str = '') -> tuple[int, list[str]]:
-    """Evidence-calibrated upper bound. Prevents raw matching from becoming 98% without a complete evidence chain."""
+    """Evidence-calibrated upper bound.
+
+    \u6bcf\u4e2a\u7f3a\u5931\u7684\u8bc1\u636e\u7ef4\u5ea6\u8d21\u732e\u4e00\u4e2a\u4e0a\u9650\u503c\u3002\u6700\u7ec8 cap \u7528\u52a0\u6743\u878d\u5408\uff08\u6700\u4f4e\u4e24\u9879 60/40\uff09
+    \u800c\u975e min() \u2014\u2014 \u907f\u514d\u5355\u4e00\u5f31\u9879\uff08\u5982\u65e0\u6cd5\u68c0\u6d4b\u7684\u5370\u7ae0\uff09\u62d6\u57ae\u5168\u5c40\u3002
+    """
     source = f'{filename}\n{text or ""}\n{match.get("title", "")}\n{match.get("reason", "")}'
     normalized = _normalize_text(source)
-    cap = 96
+    cap_values = []  # \u6536\u96c6\u6240\u6709\u89e6\u53d1\u7684\u4e0a\u9650\u503c\uff0c\u6700\u540e\u52a0\u6743\u878d\u5408
     reasons = []
 
     official = _strict_contains_any(normalized, [
-        '\u8bc1\u4e66', '\u8bc1\u660e', '\u5408\u683c\u8bc1', '\u83b7\u5956\u8bc1\u4e66', '\u6210\u7ee9\u5355',
+        '\u8bc1\u4e66', '\u8bc1\u660e', '\u5408\u683c\u8bc1', '\u83b7\u5956\u8bc1\u4e66', '\u6210\u7ee9\u5355', '\u6210\u7ee9',
         '\u8003\u8bd5\u9662', '\u6559\u80b2\u90e8', '\u5de5\u4e1a\u548c\u4fe1\u606f\u5316\u90e8', '\u5de5\u4fe1\u90e8',
         '\u7ec4\u59d4\u4f1a', '\u59d4\u5458\u4f1a', '\u534f\u4f1a', '\u5b66\u6821', '\u5b66\u9662', '\u5927\u5b66',
-        '\u516c\u7ae0', '\u76d6\u7ae0', 'seal', 'certificate'
+        '\u516c\u7ae0', '\u76d6\u7ae0', '\u8058\u4e66', '\u8058\u8bf7', '\u62c5\u4efb',
+        'seal', 'certificate'
     ])
     completion = _strict_contains_any(normalized, [
         '\u4e00\u7b49\u5956', '\u4e8c\u7b49\u5956', '\u4e09\u7b49\u5956', '\u7279\u7b49\u5956', '\u4f18\u79c0\u5956',
         '\u91d1\u5956', '\u94f6\u5956', '\u94dc\u5956', '\u5408\u683c', '\u901a\u8fc7', '\u8363\u83b7', '\u83b7\u5956',
-        '\u6388\u4e88', '\u9881\u53d1', '\u6210\u7ee9'
+        '\u6388\u4e88', '\u9881\u53d1', '\u6210\u7ee9', '\u65f6\u957f', '\u7d2f\u8ba1', '\u8058\u4e66', '\u8058\u8bf7'
     ])
     date_ok = bool(re.search(r'20\d{2}\s*(?:\u5e74|[-./]\s*)\s*(?:0?[1-9]|1[0-2])', normalized, re.I))
     text_len = len(re.sub(r'\s+', '', normalized))
@@ -1323,42 +1379,53 @@ def _strict_confidence_cap(match: dict, text: str, filename: str,
     title = _normalize_text(match.get('title', ''))
     requires_prize = any(word in title for word in ['\u7ade\u8d5b', '\u6311\u6218\u676f', '\u4e92\u8054\u7f51+', '\u84dd\u6865\u676f', '\u7535\u5b50\u8bbe\u8ba1', '\u83b7\u5956', '\u5956'])
 
+    # \u6536\u96c6\u89e6\u53d1\u7684\u4e0a\u9650\uff08\u4e0d\u7acb\u5373\u53d6 min\uff09
     if not official:
-        cap = min(cap, 78)
+        cap_values.append(88)  # \u539f\u662f 82\uff0cOCR\u5bf9\u5370\u7ae0\u6587\u5b57\u63d0\u53d6\u4e0d\u53ef\u9760\uff0c\u4e0d\u5e94\u4e25\u7f5a
         reasons.append('\u7f3a\u5c11\u5b98\u65b9\u8bc1\u4e66/\u673a\u6784/\u516c\u7ae0\u4fe1\u53f7')
     if not completion:
-        cap = min(cap, 74)
+        cap_values.append(85)  # \u539f\u662f 78\uff0c\u53c2\u4e0e\u8bc1\u660e/\u8058\u4e66\u5408\u6cd5\u5730\u65e0\u83b7\u5956\u5173\u952e\u8bcd
         reasons.append('\u672a\u8bc6\u522b\u5230\u83b7\u5956\u6216\u5b8c\u6210\u4fe1\u53f7')
     if not date_ok:
-        cap = min(cap, 88)
+        cap_values.append(93)  # \u539f\u662f 88\uff0c\u5f88\u591a\u6b63\u89c4\u6750\u6599\u4e0d\u663e\u5f0f\u5305\u542b\u65e5\u671f
         reasons.append('\u7f3a\u5c11\u53ef\u6838\u9a8c\u65e5\u671f')
     if text_len < 40:
-        cap = min(cap, 72)
+        cap_values.append(85)  # \u8bc1\u4e66\u622a\u56fe\u6587\u5b57\u5c11\u662f\u6b63\u5e38\u7684\uff0c\u4e0d\u8fc7\u4f4e\u538b\u5206
         reasons.append('OCR\u6709\u6548\u6587\u672c\u4e0d\u8db3')
     elif text_len < 100:
-        cap = min(cap, 86)
-        reasons.append('OCR\u6587\u672c\u4fe1\u606f\u504f\u5c11')
+        cap_values.append(92)  # 30-100 \u5b57\u5bf9\u5355\u5f20\u8bc1\u4e66/\u622a\u56fe\u5b8c\u5168\u6b63\u5e38
 
     if student_name:
         has_name = student_name in normalized
         has_id = bool(student_id and student_id in normalized)
         extracted = _extract_audit_features(text, filename, student_name, student_id).get('detected_name', '')
         if extracted and not (student_name in extracted or extracted in student_name or SequenceMatcher(None, student_name.lower(), extracted.lower()).ratio() >= 0.72):
-            cap = min(cap, 72)
+            cap_values.append(72)
             reasons.append('\u6750\u6599\u59d3\u540d\u4e0e\u5f53\u524d\u8d26\u53f7\u4e0d\u4e00\u81f4')
         elif not has_name and not has_id:
-            cap = min(cap, 82)
+            cap_values.append(90)  # \u539f\u662f 85\uff0c\u56e2\u961f\u8bc1\u4e66/\u7535\u5b50\u8bc1\u4e66\u5929\u7136\u65e0\u4e2a\u4eba\u59d3\u540d
             reasons.append('\u7f3a\u5c11\u5f53\u524d\u5b66\u751f\u8eab\u4efd\u5339\u914d\u8bc1\u636e')
 
     if match.get('level') and award['project_level'] and award['project_level'] != match.get('level'):
-        cap = min(cap, 68)
+        cap_values.append(78)  # \u7ea7\u522b\u68c0\u6d4b\u662f\u542f\u53d1\u5f0f\u7684\uff0c\u53ef\u80fd\u8bef\u5224\uff0c\u4e0d\u8fc7\u4f4e\u538b\u5206
         reasons.append(f'\u6750\u6599\u8d5b\u4e8b\u7ea7\u522b\u4e3a{award["project_level"]}\uff0c\u4e0e\u5339\u914d\u9879\u76ee{match.get("level")}\u4e0d\u4e00\u81f4')
     if requires_prize and not award['prize_level']:
-        cap = min(cap, 80)
+        cap_values.append(80)
         reasons.append('\u672a\u8bc6\u522b\u5230\u660e\u786e\u5956\u9879\u7b49\u7ea7')
     if requires_prize and award['prize_level'] and not award['project_level']:
-        cap = min(cap, 82)
+        cap_values.append(82)
         reasons.append(f'\u4ec5\u8bc6\u522b\u5230{award["prize_level"]}\uff0c\u7f3a\u5c11\u56fd\u5bb6/\u7701/\u6821/\u9662\u7ea7\u522b')
+
+    # \u2500\u2500 \u52a0\u6743\u878d\u5408\uff08\u66ff\u4ee3 min\uff09\u2500\u2500
+    # \u53d6\u6700\u4f4e 2 \u4e2a cap \u503c\uff0c\u6309 60/40 \u52a0\u6743\uff0c\u907f\u514d\u5355\u4e00\u5f31\u9879\u62d6\u57ae\u5168\u5c40
+    if not cap_values:
+        cap = 96
+    elif len(cap_values) == 1:
+        cap = cap_values[0]
+    else:
+        cap_values.sort()
+        # \u6700\u4f4e\u503c\u6743\u91cd 60%\uff0c\u6b21\u4f4e\u503c\u6743\u91cd 40%
+        cap = int(cap_values[0] * 0.6 + cap_values[1] * 0.4)
 
     return cap, reasons
 
@@ -1424,7 +1491,7 @@ def _audit_status(confidence: float, risk_tags: list[str], missing_fields: list[
         return 'HIGH_RISK'
     if missing_fields or risk_tags:
         return 'NEED_SUPPLEMENT'
-    if confidence >= 95:
+    if confidence >= 90:
         return 'HIGH_CONFIDENCE'
     return 'PENDING_HUMAN'
 

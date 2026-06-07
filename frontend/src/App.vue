@@ -476,7 +476,7 @@ const aiScoreInsights = computed(() => {
   const details = summary.value?.score.details || []
   const lowest = [...details].sort((a, b) => a.score - b.score)[0]
   const pending = applications.value.filter(item => ['pending_human', 'needs_more'].includes(item.status))
-  const highPending = pending.filter(item => item.ai_confidence >= 0.85).length
+  const highPending = pending.filter(item => item.ai_confidence >= 0.90).length
   const ledgerScore = completedScoreItems.value.reduce((sum, item) => sum + item.score, 0)
   return [
     {
@@ -501,7 +501,7 @@ const auditStats = computed(() => {
   const all = adminApplications.value
   return {
     pending: all.filter(item => ['pending_ai', 'pending_human', 'needs_more'].includes(item.status)).length,
-    high: all.filter(item => item.ai_confidence >= 0.85 && item.status === 'pending_human').length,
+    high: all.filter(item => item.ai_confidence >= 0.90 && item.status === 'pending_human').length,
     risk: all.filter(item => item.status === 'needs_more' || item.ai_confidence < 0.7).length,
     approved: all.filter(item => item.status === 'approved').length,
   }
@@ -667,13 +667,13 @@ function statusLabel(status: string) {
 function statusText(app: ApplicationItem) {
   if (app.status === 'needs_more') return '信息存疑需复核'
   if (app.status === 'rejected') return '材料不符合要求'
-  if (app.ai_confidence >= 0.85 && app.status !== 'rejected') return 'AI 建议通过'
+  if (app.ai_confidence >= 0.90 && app.status !== 'rejected') return 'AI 建议通过'
   if (app.ai_confidence < 0.6) return '材料需人工复核'
   return '材料需人工复核'
 }
 
 function isHighConfidenceAudit(app: ApplicationItem) {
-  return app.ai_confidence >= 0.85 && app.status === 'pending_human'
+  return app.ai_confidence >= 0.90 && app.status === 'pending_human'
 }
 
 function isReviewAudit(app: ApplicationItem) {
@@ -694,8 +694,8 @@ function orderAuditRows(rows: ApplicationItem[]) {
 }
 
 function confidenceClass(value: number) {
-  if (value >= 0.85) return 'confidence-high'
-  if (value >= 0.6) return 'confidence-mid'
+  if (value >= 0.90) return 'confidence-high'
+  if (value >= 0.65) return 'confidence-mid'
   return 'confidence-low'
 }
 
@@ -755,7 +755,7 @@ function mapSubmissionToApplication(row: any): ApplicationItem {
       recognized_text: row.ai_reason || '',
       missing_materials: missing,
       rule_ref: row.matched_regulation?.section || row.section || '',
-      recommendation: row.review_remarks || row.ai_reason || (confidence >= 0.85 ? 'AI 建议通过，等待人工复核。' : '建议人工复核材料。'),
+      recommendation: row.review_remarks || row.ai_reason || (confidence >= 0.90 ? 'AI 建议通过，等待人工复核。' : '建议人工复核材料。'),
       matched_regulation: row.matched_regulation || {},
       extracted_features: row.extracted_features || {},
       risk_assessment: row.risk_assessment || {},
@@ -764,7 +764,7 @@ function mapSubmissionToApplication(row: any): ApplicationItem {
     },
     ai_confidence: confidence,
     risk_tags: [
-      confidence >= 0.85 ? 'AI高置信' : confidence < 0.7 ? '需人工复核' : '待人工确认',
+      confidence >= 0.90 ? 'AI高置信' : confidence < 0.65 ? '需人工复核' : '待人工确认',
       ...(missing.length ? ['材料缺失'] : []),
       ...((row.risk_assessment?.risk_tags || []) as string[]),
     ],
@@ -1703,7 +1703,7 @@ async function submitModalSubmit() {
       completion_date: submitForm.completion_date || undefined,
       academic_year: currentAcademicYear.value,
       ai_confidence: submitModalConfidence.value,
-      ai_decision: submitModalConfidence.value >= 80 ? 'high' : (submitModalConfidence.value >= 60 ? 'medium' : 'low'),
+      ai_decision: submitModalConfidence.value >= 90 ? 'high' : (submitModalConfidence.value >= 65 ? 'medium' : 'low'),
       ai_reason: bestMatch?.reason || '',
       ai_audit: bestMatch?.audit || {},
     })
@@ -2197,21 +2197,21 @@ function removeMaterialSelectedFile(index: number) {
 }
 
 function matchConfidenceClass(value: number) {
-  if (value >= 95) return 'conf-high'
-  if (value >= 60) return 'conf-medium'
+  if (value >= 90) return 'conf-high'
+  if (value >= 65) return 'conf-medium'
   return 'conf-low'
 }
 
 function auditLightLabel(match: AnalyzeMatch) {
   const missingCount = match.audit?.missing_fields?.length || 0
-  if (match.confidence >= 95 && missingCount === 0) return '绿灯高置信'
-  if (match.confidence >= 60) return missingCount ? '需补充佐证' : '黄灯待复核'
+  if (match.confidence >= 90 && missingCount === 0) return '绿灯高置信'
+  if (match.confidence >= 65) return missingCount ? '需补充佐证' : '黄灯待复核'
   return '红灯高风险'
 }
 
 function auditLightClass(match: AnalyzeMatch) {
-  if (match.confidence >= 95 && !(match.audit?.missing_fields?.length)) return 'audit-light-green'
-  if (match.confidence >= 60) return 'audit-light-amber'
+  if (match.confidence >= 90 && !(match.audit?.missing_fields?.length)) return 'audit-light-green'
+  if (match.confidence >= 65) return 'audit-light-amber'
   return 'audit-light-red'
 }
 
@@ -2278,7 +2278,7 @@ function recalculateManualAuditConfidence(match: AnalyzeMatch) {
 
   match.confidence = Number(nextConfidence.toFixed(1))
   audit.confidence_score = match.confidence
-  match.decision = match.confidence >= 95 && unresolvedCount === 0 ? 'high' : (match.confidence >= 60 ? 'medium' : 'low')
+  match.decision = match.confidence >= 90 && unresolvedCount === 0 ? 'high' : (match.confidence >= 65 ? 'medium' : 'low')
   audit.status = match.decision === 'high'
     ? 'HIGH_CONFIDENCE'
     : (match.confidence >= 60 ? (audit.missing_fields.length ? 'NEED_SUPPLEMENT' : 'PENDING_HUMAN') : 'HIGH_RISK')
@@ -2500,7 +2500,7 @@ async function submitMatchedMaterial(result: AnalyzeResult, match: AnalyzeMatch)
       uploaded_file_ids: uploadedFileIds,
       academic_year: currentAcademicYear.value,
       ai_confidence: match.confidence,
-      ai_decision: match.decision || (match.confidence >= 80 ? 'high' : 'medium'),
+      ai_decision: match.decision || (match.confidence >= 90 ? 'high' : 'medium'),
       ai_reason: match.reason || '',
       ai_audit: match.audit || {},
     })
@@ -2722,7 +2722,7 @@ async function submitTargetedMaterial() {
 async function loadAdminQueue() {
   const data = await api<{ submissions: any[] }>(`/admin/submissions?per_page=200${auditQueue.value ? `&queue=${auditQueue.value}` : ''}`)
   let rows = (data.submissions || []).map(mapSubmissionToApplication)
-  if (auditQueue.value === 'high_confidence') rows = rows.filter(item => item.ai_confidence >= 0.85 && item.status === 'pending_human')
+  if (auditQueue.value === 'high_confidence') rows = rows.filter(item => item.ai_confidence >= 0.90 && item.status === 'pending_human')
   if (auditQueue.value === 'risk') rows = rows.filter(item => item.ai_confidence < 0.7 || item.status === 'needs_more')
   adminApplications.value = orderAuditRows(rows)
 }
@@ -4028,7 +4028,7 @@ onMounted(async () => {
               <span v-else>🤖 AI 审核</span>
             </button>
             <!-- AI 置信率小环（分析完成后显示在按钮旁） -->
-            <div v-if="submitModalAnalyzed" :class="['cert-conf-inline', submitModalConfidence >= 85 ? 'conf-high' : submitModalConfidence >= 60 ? 'conf-medium' : 'conf-low']">
+            <div v-if="submitModalAnalyzed" :class="['cert-conf-inline', submitModalConfidence >= 90 ? 'conf-high' : submitModalConfidence >= 65 ? 'conf-medium' : 'conf-low']">
               <span class="cert-inline-value">{{ Math.round(submitModalConfidence) }}%</span>
               <span class="cert-inline-label">AI置信率</span>
             </div>
@@ -4263,9 +4263,9 @@ onMounted(async () => {
           <div class="apc-confidence-row">
             <span>AI 置信率</span>
             <div class="apc-confidence-bar">
-              <div class="apc-confidence-fill" :style="{ width: item.confidence + '%', background: item.confidence >= 80 ? '#10b981' : item.confidence >= 50 ? '#f59e0b' : '#ef4444' }" />
+              <div class="apc-confidence-fill" :style="{ width: item.confidence + '%', background: item.confidence >= 90 ? '#10b981' : item.confidence >= 65 ? '#f59e0b' : '#ef4444' }" />
             </div>
-            <strong :style="{ color: item.confidence >= 80 ? 'var(--success)' : item.confidence >= 50 ? 'var(--accent-amber)' : 'var(--danger)' }">{{ item.confidence.toFixed(1) }}%</strong>
+            <strong :style="{ color: item.confidence >= 90 ? 'var(--success)' : item.confidence >= 65 ? 'var(--accent-amber)' : 'var(--danger)' }">{{ item.confidence.toFixed(1) }}%</strong>
           </div>
           <div v-if="item.risk_tags.length" class="apc-tags">
             <span v-for="tag in item.risk_tags" :key="tag" class="apc-tag">{{ tag }}</span>
@@ -4311,9 +4311,9 @@ onMounted(async () => {
           <div class="apc-confidence-row">
             <span>AI 置信率</span>
             <div class="apc-confidence-bar">
-              <div class="apc-confidence-fill" :style="{ width: item.ai_confidence * 100 + '%', background: item.ai_confidence * 100 >= 80 ? '#10b981' : item.ai_confidence * 100 >= 50 ? '#f59e0b' : '#ef4444' }" />
+              <div class="apc-confidence-fill" :style="{ width: item.ai_confidence * 100 + '%', background: item.ai_confidence * 100 >= 90 ? '#10b981' : item.ai_confidence * 100 >= 65 ? '#f59e0b' : '#ef4444' }" />
             </div>
-            <strong :style="{ color: item.ai_confidence * 100 >= 80 ? 'var(--success)' : item.ai_confidence * 100 >= 50 ? 'var(--accent-amber)' : 'var(--danger)' }">{{ (item.ai_confidence * 100).toFixed(1) }}%</strong>
+            <strong :style="{ color: item.ai_confidence * 100 >= 90 ? 'var(--success)' : item.ai_confidence * 100 >= 65 ? 'var(--accent-amber)' : 'var(--danger)' }">{{ (item.ai_confidence * 100).toFixed(1) }}%</strong>
           </div>
           <div v-if="item.risk_tags.length" class="apc-tags">
             <span v-for="tag in item.risk_tags" :key="tag" class="apc-tag">{{ tag }}</span>

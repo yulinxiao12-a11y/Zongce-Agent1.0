@@ -227,27 +227,28 @@ def ela_analysis(file_path: str, quality: int = 90) -> dict:
         anomaly_ratio = anomaly_count / max(total_pixels, 1)
 
         # ELA 评分: 正常图像误差均匀 → 高分；异常图像有局部高误差 → 低分
+        # 注意：截图/PNG原图重存为JPEG必然产生差异，阈值需放宽避免误报
         if mean_error < 1.0:
             ela_score = 1.0  # 几乎无损 (PNG 原图)
         elif anomaly_ratio < 0.01:
             ela_score = 0.95  # 正常 JPEG
         elif anomaly_ratio < 0.03:
             ela_score = 0.85  # 轻微异常
-        elif anomaly_ratio < 0.05:
-            ela_score = 0.70  # 可疑
-        elif anomaly_ratio < 0.10:
-            ela_score = 0.50  # 高度可疑
+        elif anomaly_ratio < 0.08:
+            ela_score = 0.70  # 边界（截图重压缩常见区间）
+        elif anomaly_ratio < 0.15:
+            ela_score = 0.50  # 可疑 — 需结合其他证据
         else:
-            ela_score = 0.30  # 极可疑 — 大幅编辑
+            ela_score = 0.30  # 高度可疑 — 大面积编辑痕迹
 
-        is_suspicious = anomaly_ratio >= 0.05
+        is_suspicious = anomaly_ratio >= 0.08
 
-        if anomaly_ratio >= 0.10:
+        if anomaly_ratio >= 0.15:
             warning_level = 'danger'
             detail = f'ELA检测到大面积异常({anomaly_ratio*100:.1f}%像素误差>2σ)，疑似大幅篡改/拼接'
-        elif anomaly_ratio >= 0.05:
+        elif anomaly_ratio >= 0.08:
             warning_level = 'warning'
-            detail = f'ELA检测到局部异常({anomaly_ratio*100:.1f}%像素误差>2σ)，可能存在局部编辑'
+            detail = f'ELA检测到局部异常({anomaly_ratio*100:.1f}%像素误差>2σ)，可能为截图重压缩或局部编辑'
         else:
             warning_level = 'safe'
             detail = f'ELA正常(异常像素{anomaly_ratio*100:.2f}%)'
@@ -416,12 +417,12 @@ def forensic_analysis(file_path: str) -> dict:
         risk_score += 0.2
         recommendations.append('ELA检测到局部异常，建议人工核实')
 
-    # 公章信号 (正面)
+    # 公章信号 — 仅作为正面加分项，无公章不扣分
+    # （技术上红色像素检测≠真实印章识别，且电子证书印章无法用颜色检测）
+    seal_bonus = 0.0
     if red_seal['has_red_seal'] and red_seal['confidence'] > 0.6:
-        risk_score = max(0, risk_score - 0.1)  # 有公章降低风险
-    elif not red_seal['has_red_seal']:
-        risk_score += 0.05  # 无公章轻微可疑
-        recommendations.append('未检测到红色印章，如果是官方证书请确保包含公章')
+        seal_bonus = 0.08  # 有公章信号降低风险（加分而非惩罚缺失）
+        risk_score = max(0, risk_score - seal_bonus)
 
     risk_score = min(1.0, max(0.0, risk_score))
 
@@ -442,6 +443,7 @@ def forensic_analysis(file_path: str) -> dict:
         'overall_risk': round(risk_score, 3),
         'overall_level': overall_level,
         'confidence_penalty': confidence_penalty,
+        'seal_bonus': seal_bonus,
         'recommendations': recommendations,
     }
 
@@ -449,18 +451,26 @@ def forensic_analysis(file_path: str) -> dict:
 def apply_forensic_penalty(match: dict, forensic_result: dict) -> dict:
     """将取证结果应用到匹配置信度
 
-    按照文档设计: Exif异常或ELA大面积篡改 → 强制置信度≤50%
+    - Exif异常或ELA大面积篡改 → 强制置信度≤50%（仅 danger 级别）
+    - 公章检测为正面加分（通过 seal_bonus 抵消部分 penalty）
+    - warning 级别应用温和惩罚，不再一刀切
     """
     penalty = forensic_result.get('confidence_penalty', 0)
-    if penalty <= 0:
+    seal_bonus = forensic_result.get('seal_bonus', 0.0)
+
+    # 公章加分抵消取证惩罚（有 seal 的材料降低 penalty）
+    effective_penalty = max(0, penalty - seal_bonus)
+
+    if effective_penalty <= 0 and forensic_result['overall_level'] != 'danger':
         match['forensic_penalty_applied'] = False
         return match
 
     original_conf = match.get('confidence', 50)
-    penalized_conf = round(original_conf * (1 - penalty), 1)
-    # 硬上限: 高风险 → ≤50%
     if forensic_result['overall_level'] == 'danger':
-        penalized_conf = min(penalized_conf, 50)
+        # 高危：强制置信度≤50%
+        penalized_conf = min(original_conf, 50)
+    else:
+        penalized_conf = round(original_conf * (1 - effective_penalty), 1)
 
     match['confidence'] = max(5, penalized_conf)
     match['forensic_penalty_applied'] = True
